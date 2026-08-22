@@ -1,3 +1,9 @@
 __pycache__/
 *.py[cod]
 .DS_Store
+
+# 运行时数据：接收历史与包裹图片
+logs/
+
+# 本地工具配置
+.claude/
