@@ -7,11 +7,11 @@ from logger import print_log
 from websocket_handler import websocket_handler
 
 
-async def _run(port, printer_name, stop_event, ready_event, ack_callback=None):
+async def _run(port, printers, stop_event, ready_event, ack_callback=None):
     host = "localhost" if platform.system() == "Windows" else "0.0.0.0"
     try:
         async with websockets.serve(
-            lambda ws: websocket_handler(ws, printer_name, ack_callback),
+            lambda ws: websocket_handler(ws, printers, ack_callback),
             host=host,
             port=port,
             max_size=None,
@@ -30,6 +30,10 @@ async def _run(port, printer_name, stop_event, ready_event, ack_callback=None):
         print_log(f"❌ WebSocket 服务异常: {e}")
 
 
-def start_websocket_server(port, printer_name, stop_event, ready_event=None, ack_callback=None):
-    """阻塞运行 WebSocket 服务，直到 stop_event 被置位。"""
-    asyncio.run(_run(port, printer_name, stop_event, ready_event, ack_callback))
+def start_websocket_server(port, printers, stop_event, ready_event=None, ack_callback=None):
+    """阻塞运行 WebSocket 服务，直到 stop_event 被置位。
+
+    printers: printer_utils.make_printer() 的列表，第一台是默认打印机；
+              空列表表示没启用自动打印。
+    """
+    asyncio.run(_run(port, printers, stop_event, ready_event, ack_callback))

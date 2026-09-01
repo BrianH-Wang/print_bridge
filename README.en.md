@@ -10,7 +10,7 @@ The problem it solves: a browser or web page cannot drive the local printer dire
 
 The program consists of two modules that can be enabled independently via checkboxes in the UI.
 
-> **The front end only ever opens one WebSocket** (default `ws://localhost:8765`; the port is configured in the "前端连接" card and may be anything in 8000–65535).
+> **The front end only ever opens one WebSocket** (default `ws://localhost:8765`; the port is configured in the "前端连接" card and may be anything in 1024–65535).
 > Printing and data push **share that single connection**, so the WebSocket service starts as soon as *either* feature is checked —
 > even with no printer involved and only "获取数据" enabled, the front end still connects and still receives data.
 

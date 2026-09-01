@@ -4,7 +4,10 @@
 新增颜色只需在 PALETTES 里补一项，不必改样式表结构。
 """
 
-from PyQt6.QtCore import Qt
+import os
+
+from PyQt6.QtCore import QPointF, QStandardPaths, Qt
+from PyQt6.QtGui import QColor, QPainter, QPixmap, QPolygonF
 
 LIGHT = "light"
 DARK = "dark"
@@ -145,7 +148,7 @@ QComboBox QAbstractItemView {{
     padding: 4px;
     outline: none;
 }}
-/* 下拉箭头：用内嵌 SVG 自绘三角形，跨平台一致。 */
+/* 下拉箭头：PNG 由 _arrow_icon_path() 按主题色现画，跨平台一致。 */
 QComboBox {{ padding-right: 26px; }}
 QComboBox::drop-down {{
     border: none;
@@ -155,10 +158,10 @@ QComboBox::drop-down {{
 }}
 QComboBox::drop-down:hover {{ background: {secondary_hover}; }}
 QComboBox::down-arrow {{
-    /* 深色三角，箭头向下 */
-    image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6'><path d='M0 0 L10 0 L5 6 Z' fill='{text_arrow}'/></svg>");
+    image: url("{arrow_icon}");
     width: 10px; height: 6px;
 }}
+QComboBox::down-arrow:disabled {{ image: url("{arrow_icon_disabled}"); }}
 
 QPushButton {{
     border: none;
@@ -270,9 +273,55 @@ QPlainTextEdit#log {{
 """
 
 
+ARROW_SIZE = (10, 6)   # 逻辑像素；Retina 另出一张 @2x
+
+
+def _arrow_pixmap(color, scale):
+    """画一个朝下的实心三角，透明底。"""
+    width, height = ARROW_SIZE[0] * scale, ARROW_SIZE[1] * scale
+    pixmap = QPixmap(width, height)
+    pixmap.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+    painter.setPen(Qt.PenStyle.NoPen)
+    painter.setBrush(QColor(color))
+    painter.drawPolygon(QPolygonF([
+        QPointF(0, 0), QPointF(width, 0), QPointF(width / 2, height),
+    ]))
+    painter.end()
+    return pixmap
+
+
+def _arrow_icon_path(mode, color_key="text_arrow"):
+    """把下拉箭头落成 PNG 并返回路径。
+
+    Qt 的样式表不认 data: URI（写进 image: url(...) 会被当成空图，
+    表现就是下拉框只剩一块空白按钮），只能引用真实文件路径。
+    文件名带颜色值，改了配色会自动重画一张。
+    """
+    color = PALETTES[mode][color_key]
+    cache_dir = QStandardPaths.writableLocation(
+        QStandardPaths.StandardLocation.CacheLocation
+    ) or QStandardPaths.writableLocation(QStandardPaths.StandardLocation.TempLocation)
+    os.makedirs(cache_dir, exist_ok=True)
+
+    base = os.path.join(cache_dir, f"arrow-{color.lstrip('#')}")
+    path = f"{base}.png"
+    if not os.path.exists(path):
+        _arrow_pixmap(color, 1).save(path, "PNG")
+        # Qt 加载图片时会自动优先找同名 @2x，Retina 上才不会糊
+        _arrow_pixmap(color, 2).save(f"{base}@2x.png", "PNG")
+    return path.replace("\\", "/")   # Windows 路径的反斜杠在样式表里会被当转义
+
+
 def build_stylesheet(mode):
     """按解析后的主题（light / dark）生成样式表。"""
-    return _TEMPLATE.format(**PALETTES[mode])
+    return _TEMPLATE.format(
+        arrow_icon=_arrow_icon_path(mode),
+        arrow_icon_disabled=_arrow_icon_path(mode, "disabled_text"),
+        **PALETTES[mode],
+    )
 
 
 def resolve(app, mode):

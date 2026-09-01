@@ -7,3 +7,7 @@ logs/
 
 # 本地工具配置
 .claude/
+
+# 打包产物（PyInstaller）
+build/
+dist/

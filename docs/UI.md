@@ -1,0 +1,227 @@
+# 界面元素对照表
+
+改 UI 时用这份文档定位：**直接说编号**（如「A4 的按钮太挤」「E6 提示文案改一下」），
+或说名称（如「配置方案卡的保存按钮」）。编号只在这份文档里用，代码里不出现。
+
+界面代码在 `ui/` 包里（`gui.py` 只剩一行转发，保持老 import 可用），配色和样式在 `theme.py`。
+表里的「代码位置」是稳定锚点，行号会随改动漂移，以模块名 + 方法名为准。
+
+```
+ui/
+  main_window.py      主窗口：拼装各配置卡与页签（H / A / B / C / D外壳 / E / F / G / T）
+  constants.py        尺寸、上限、下拉选项、表格列名
+  helpers.py          纯函数：human_bytes / normalize_addr / clamp_* / sanitize_printers
+  printer_list.py     D 区打印机列表组件（表格 + 增删改 + 设为默认）
+  profiles.py         A 区配置方案（mixin：要读写各张卡片上的控件）
+  server_control.py   F 启停服务与各项校验（mixin）
+  panels/
+    log_panel.py      L 日志页签（自带队列与定时器）
+    history_panel.py  Y 接收历史页签（记录、筛选、重发、ack 都归它）
+  dialogs/
+    image_preview.py  printer.py  http_response.py
+    advanced_search.py  history_search.py          ← 弹窗一个模块一个
+```
+
+---
+
+## 整体布局
+
+```
+┌─ 主窗口 (WebSocketServerGUI, 最小 880×880, 默认 1080×880) ────────────┐
+│  H1 标题「Print Bridge」            H2 主题  H3 [跟随系统|白天|黑夜]  │
+├──────────────────────────────────────────────────────────────────────┤
+│  A  配置方案  📁                                                      │
+│     A1 当前方案[下拉]  A2保存 A3新建 A4重命名 A5删除 A6设为默认        │
+│     A7 提示行：当前方案「仓库B」（默认方案） · 已保存                  │
+├──────────────────────────────────────────────────────────────────────┤
+│  B  功能选择  🛠     B1 ☐自动打印   B2 ☑获取数据                      │
+├──────────────────────────────────────────────────────────────────────┤
+│  C  前端连接  🔌     C1 WebSocket 端口 (1024-65535): [8765]           │
+│     C2 提示行：前端连接 ws://localhost:8765 ——…                       │
+├──────────────────────────────────────────────────────────────────────┤
+│  D  自动打印配置  🖨                                  ← 勾 B1 才显示  │
+│     D1 打印机表格 Key|备注|方式|目标|默认★     D2添加  D3编辑         │
+│                                                D4删除  D5设为默认     │
+│     D6 提示行：前端发 {"type":"print","printer":"receipt"} 指定打给谁  │
+├──────────────────────────────────────────────────────────────────────┤
+│  E  获取数据配置  🌐  E1 数据获取地址[输入框]          ← 勾 B2 才显示  │
+│     E2 数据流[单向|双向] E3 超时(秒)[10] E4 [并发|单发] E5 HTTP响应…  │
+│     E6 提示行：POST 到 http://… · 等前端回复超时 8s · 单发排队         │
+├──────────────────────────────────────────────────────────────────────┤
+│  F  [ 启动服务器 / 停止服务器 ]                                       │
+│  G  状态：就绪，等待启动                                              │
+├──────────────────────────────────────────────────────────────────────┤
+│  T  [日志输出 📋] [接收历史 📜]                                       │
+│     L / Y 两个页签的内容见下表                                        │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+卡片顺序由 `main_window._build_left_column()` 决定；A–E 五张卡都是 `QGroupBox`，
+标题文字里的 emoji 前有两个空格（`"配置方案  📁"`），是为了和标题拉开距离。
+
+---
+
+## H 顶栏 — `main_window._build_header()` / `_build_theme_switch()`
+
+| 编号 | 名称 | 界面文字 | 控件 | 备注 |
+| --- | --- | --- | --- | --- |
+| H1 | 标题 | Print Bridge | 局部变量 `title` | 样式 `QLabel#title` |
+| H2 | 主题标签 | 主题 | 局部变量 `theme_label` | 样式 `QLabel#hint` |
+| H3 | 主题分段控件 | 跟随系统 / 白天 / 黑夜 | `self.theme_group` | 容器 `QWidget#segment`，按钮 `QPushButton#seg`；选项来自 `theme.THEME_CHOICES` |
+
+## A 配置方案卡 — `main_window._build_profile_card()` + `ui/profiles.py`
+
+| 编号 | 名称 | 界面文字 | 控件 | 触发的方法 |
+| --- | --- | --- | --- | --- |
+| A0 | 卡片本体 | 配置方案  📁 | 局部变量 `card` | — |
+| A1 | 方案下拉框 | 当前方案: | `self.profile_combo` | `on_profile_selected()` |
+| A2 | 保存按钮 | 保存 | `self.profile_buttons[0]` | `save_profile()` |
+| A3 | 新建按钮 | 新建 | `self.profile_buttons[1]` | `new_profile()` |
+| A4 | 重命名按钮 | 重命名 | `self.profile_buttons[2]` | `rename_profile()` |
+| A5 | 删除按钮 | 删除 | `self.profile_buttons[3]` | `delete_profile()` |
+| A6 | 设为默认按钮 | 设为默认 | `self.profile_buttons[4]` | `set_default_profile()` |
+| A7 | 方案提示行 | 当前方案「X」（默认方案） · 已保存 | `self.profile_hint` | `_update_profile_hint()` |
+
+按钮的文字 / 提示 / 样式 / 回调集中在 `_build_profile_card()` 里的 `buttons` 列表，
+加减按钮改这一处即可（栅格列号和 hint 跨列数会跟着 `len(buttons)` 走）。
+默认方案在 A1 里显示为 `★ 名称`，真名存在 item 的 `data` 里。
+
+## B 功能选择卡 — `main_window._build_function_card()`
+
+| 编号 | 名称 | 界面文字 | 控件 |
+| --- | --- | --- | --- |
+| B1 | 自动打印开关 | 自动打印 | `self.print_checkbox` |
+| B2 | 获取数据开关 | 获取数据 | `self.data_checkbox` |
+
+勾选状态控制 D / E 两张卡的显隐（`toggle_modules()`）。只勾 B1 = 只打印，HTTP 服务不启动。
+运行中这两个复选框不用 `setEnabled(False)`——macOS 上禁用后的勾选标记几乎看不见，改为屏蔽鼠标事件。
+
+## C 前端连接卡 — `main_window._build_connection_card()`
+
+| 编号 | 名称 | 界面文字 | 控件 | 备注 |
+| --- | --- | --- | --- | --- |
+| C1 | 端口输入框 | WebSocket 端口 (1024-65535): | `self.port_input` | 校验在 `server_control._validate_port()` |
+| C2 | 连接提示行 | 前端连接 ws://localhost:8765 —— … | `self.ws_hint` | `_update_ws_hint()` |
+
+## D 自动打印配置卡 — `ui/printer_list.py`（外壳在 `main_window._build_print_card()`）
+
+| 编号 | 名称 | 界面文字 | 控件 | 备注 |
+| --- | --- | --- | --- | --- |
+| D0 | 卡片本体 | 自动打印配置  🖨 | `self.print_group` 包着 `self.printer_list` | 勾 B1 才显示 |
+| D1 | 打印机表格 | Key / 备注 / 方式 / 目标 / 默认 | `printer_list.table` | 只读，双击一行 = 编辑；渲染在 `render()`，列名 `PRINTER_COLUMNS` |
+| D2 | 添加按钮 | 添加 | `printer_list.buttons["添加"]` | `add()` → 打开 P6，上限 `MAX_PRINTERS` |
+| D3 | 编辑按钮 | 编辑 | `printer_list.buttons["编辑"]` | `edit()` |
+| D4 | 删除按钮 | 删除 | `printer_list.buttons["删除"]` | `remove()`，弹窗确认 |
+| D5 | 设为默认按钮 | 设为默认 | `printer_list.buttons["设为默认"]` | `make_default()`：把该行挪到第一行 |
+| D6 | 提示行 | 前端发 …指定打给谁 · 共 N 台 | `printer_list.hint` | `_update_hint()` |
+
+- **第一行就是默认打印机**（「默认」列显示 ★），前端不指定 `printer` 时用它——
+  单一事实来源，不额外存一个 default key。
+- 组件改动后发 `changed` 信号，主窗口据此刷新 A7 的「未保存」状态。
+- 打印机列表随方案保存在 `printers` 数组；启动时由 `printer_list.validate()` 校验后
+  整个列表传给 `start_websocket_server()`。
+- 表格超过 3 行就滚动，高度由 `PRINTER_TABLE_HEIGHT` 定死，不挤压下面的卡片。
+
+## E 获取数据配置卡 — `main_window._build_data_card()`
+
+| 编号 | 名称 | 界面文字 | 控件 | 备注 |
+| --- | --- | --- | --- | --- |
+| E0 | 卡片本体 | 获取数据配置  🌐 | `self.data_group` | 勾 B2 才显示 |
+| E1 | 地址输入框 | 数据获取地址: | `self.addr_input` | 规整用 `helpers.normalize_addr()`，校验 `_validate_addr()` |
+| E2 | 数据流下拉 | 单向（只转发）/ 双向（等前端回复） | `self.flow_combo` | 选项 `FLOW_CHOICES`，切换走 `_on_flow_changed()` |
+| E3 | 超时输入框 | 超时(秒): | `self.timeout_input` / `self.timeout_label` | 校验 `_validate_timeout()`；单向+并发时置灰 |
+| E4 | 分发下拉 | 并发 / 单发 | `self.dispatch_combo` | 选项 `DISPATCH_CHOICES` |
+| E5 | HTTP 响应按钮 | HTTP 响应… | `self.http_resp_btn` | 打开 P5；运行中也能点，改完立即生效 |
+| E6 | 提示行 | POST 到 http://… · 模式摘要 | `self.data_hint` | `_update_data_hint()`，地址不合法显示 ⚠️ |
+
+E2–E4 三项和地址一样属于「配置方案」，启动服务时通过 `configure_flow()` 下发给 `data_receiver`。
+E5 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `http_responses`，由 `configure_responses()` 下发。
+
+## F / G 启动按钮与状态条 — `main_window._build_left_column()` + `ui/server_control.py`
+
+| 编号 | 名称 | 界面文字 | 控件 | 备注 |
+| --- | --- | --- | --- | --- |
+| F | 启动/停止按钮 | 启动服务器 / 停止服务器 | `self.start_btn` | 运行中换 `objectName="danger"` 变红，见 `start_server()` / `stop_server()` |
+| G | 状态条 | 状态：… | `self.status_label` | `_set_status(text, state)`，state 取 `idle/running/stopped/error`，配色见 `QLabel#status[state="…"]` |
+
+## T 页签区 — `main_window.init_ui()`
+
+| 编号 | 名称 | 界面文字 | 控件 |
+| --- | --- | --- | --- |
+| T1 | 日志页签 | 日志输出 📋 | `self.log_panel`，`self.tabs` 第 0 页 |
+| T2 | 历史页签 | 接收历史 📜（带条数） | `self.history`，第 `self.history_tab_index` 页；标题由 `HistoryPanel.countChanged` 驱动 |
+
+## L 日志页签 — `ui/panels/log_panel.py`
+
+| 编号 | 名称 | 界面文字 | 控件 |
+| --- | --- | --- | --- |
+| L1 | 自动滚动开关 | 自动滚动 | `log_panel.autoscroll_checkbox` |
+| L2 | 清空按钮 | 清空 | 局部变量 `clear_btn` |
+| L3 | 日志窗口 | — | `log_panel.log_window`（样式 `QPlainTextEdit#log`，等宽字体） |
+
+面板自己持有 `log_queue` 和定时器，每 `LOG_POLL_MS` 批量刷一次，单次最多取 `MAX_LOG_DRAIN` 条。
+
+## Y 接收历史页签 — `ui/panels/history_panel.py`
+
+| 编号 | 名称 | 界面文字 | 控件 |
+| --- | --- | --- | --- |
+| Y1 | 存储目录标签 | 存储目录：… | `history.store_label` |
+| Y2 | 修改目录按钮 | 修改目录 | `history.change_dir_btn` |
+| Y3 | 打开目录按钮 | 打开目录 | `history.open_dir_btn` |
+| Y4 | 重发按钮 | 重发选中 | `history.resend_btn` |
+| Y5 | 搜索输入框 | 按单号 / expressNo 模糊搜索 | `history.search_input` |
+| Y6 | 搜索按钮 | 搜索 | `history.search_btn` |
+| Y7 | 高级搜索按钮 | 历史搜索 | `history.advanced_btn`（打开 P3） |
+| Y8 | 重置按钮 | 重置 | `history.reset_filter_btn` |
+| Y9 | 筛选摘要行 | 共 N 条 · 图片 X MB… | `history.filter_summary` |
+| Y10 | 历史表格 | — | `history.history_table`（样式 `QTableWidget#history`） |
+
+- 记录、存储目录、ack 队列都归这个面板，主窗口只接 `countChanged` 改页签标题。
+- 表格列：`HISTORY_FIXED_COLUMNS`（时间 + 固定字段 + 图片 + 推送），
+  新字段自动插列见 `_ensure_columns()`；行高 `ROW_HEIGHT`，缩略图 `THUMB_SIZE`。
+
+## P 弹窗 — `ui/dialogs/`
+
+| 编号 | 名称 | 类（模块） | 从哪打开 |
+| --- | --- | --- | --- |
+| P1 | 图片预览 | `ImagePreviewDialog`（`image_preview.py`） | 双击 Y10 的图片列 |
+| P2 | 历史筛选条件 | `AdvancedSearchDialog`（`advanced_search.py`） | 历史筛选 |
+| P3 | 历史搜索 | `HistorySearchDialog`（`history_search.py`） | Y7 |
+| P4 | 确认与错误提示 | `QMessageBox` | 切换方案有未保存修改、删除、校验失败等 |
+| P5 | HTTP 响应配置 | `HttpResponseDialog`（`http_response.py`） | E5，7 个场景各自的状态码与说明，带「全部恢复默认」 |
+| P6 | 添加 / 编辑打印机 | `PrinterDialog`（`printer.py`） | D2 / D3，填 key、备注、方式、队列或 IP:端口，带「测试连接」 |
+
+`HistorySearchDialog` 通过 `self.panel` 拿记录、图片和重发能力，parent 必须是 `HistoryPanel`。
+
+---
+
+## 样式与配色 — `theme.py`
+
+- 颜色全部走 `PALETTES[light|dark]` 里的 token，样式表 `_TEMPLATE` 只引用 token 名，
+  **改颜色不用动样式表结构**。
+- 常用选择器：`QGroupBox`（卡片）、`QLabel#hint`（灰色提示行）、`QLabel#title`、
+  `QLabel#status[state="…"]`、`QPushButton`（主按钮）/`#secondary`/`#danger`/`#seg`、
+  `QLineEdit, QComboBox`（输入控件）、`QTableWidget#history`、`QPlainTextEdit#log`、
+  `QTabBar::tab`。
+- 下拉箭头是 `_arrow_icon_path()` 按主题色现画的 PNG（Qt 样式表不支持 data: URI），
+  改箭头形状去 `_arrow_pixmap()`，改大小去 `ARROW_SIZE`。
+
+## 改动落点速查
+
+| 想改什么 | 去哪 |
+| --- | --- |
+| 某个控件的文字 / 提示气泡 | `main_window` 里对应的 `_build_*_card()`，或对应的组件模块 |
+| 卡片顺序、卡片之间的间距 | `main_window._build_left_column()`（`col.setSpacing`） |
+| 卡片内的行距、列宽 | 各 `_build_*` 里的 `QGridLayout` 参数 |
+| 提示行与输入框的间距 | 各卡里的 `hint_row`（固定 26px = 6 顶间距 + 20 文字） |
+| 窗口尺寸 | `main_window.init_ui()` 的 `setMinimumSize` / `resize` |
+| 尺寸 / 上限 / 下拉选项 | `ui/constants.py` |
+| 与界面无关的取值、校验、格式化 | `ui/helpers.py`（可直接单测，不用起 Qt） |
+| 颜色 | `theme.py` 的 `PALETTES` |
+| 圆角、边框、字重等结构性样式 | `theme.py` 的 `_TEMPLATE` |
+| 运行中哪些控件要禁用 | `ui/server_control.py` 的 `_set_inputs_enabled()` |
+| 打印机表格的行为 | `ui/printer_list.py` |
+| 接收历史的行为 | `ui/panels/history_panel.py` |
+
+> 改了界面结构（新增/删除控件、改编号涉及的顺序）请顺手更新这份文档，
+> 否则下次按编号定位会对不上。

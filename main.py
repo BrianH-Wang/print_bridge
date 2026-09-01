@@ -2,7 +2,7 @@ import sys
 
 from PyQt6.QtWidgets import QApplication
 
-from gui import WebSocketServerGUI
+from ui.main_window import WebSocketServerGUI
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
