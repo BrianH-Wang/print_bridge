@@ -200,7 +200,7 @@ E5 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `h
 | P2 | 历史筛选条件 | `AdvancedSearchDialog`（`advanced_search.py`） | 历史筛选 |
 | P3 | 历史搜索 | `HistorySearchDialog`（`history_search.py`） | Y7 |
 | P4 | 确认与错误提示 | `QMessageBox` | 切换方案有未保存修改、删除、校验失败等 |
-| P5 | HTTP 响应配置 | `HttpResponseDialog`（`http_response.py`） | E5，7 个场景各自的状态码与说明，带「全部恢复默认」 |
+| P5 | HTTP 响应配置 | `HttpResponseDialog`（`http_response.py`） | E5，7 个场景各自的状态码与说明，带「全部恢复默认」；行高 `ROW_HEIGHT`、单元格留白 `CELL_MARGIN` |
 | P6 | 添加 / 编辑打印机 | `PrinterDialog`（`printer.py`） | D2 / D3，填 key、备注、方式、队列或 IP:端口，带「测试连接」 |
 
 `HistorySearchDialog` 通过 `self.panel` 拿记录、图片和重发能力，parent 必须是 `HistoryPanel`。
@@ -223,9 +223,9 @@ E5 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `h
 | 想改什么 | 去哪 |
 | --- | --- |
 | 某个控件的文字 / 提示气泡 | `main_window` 里对应的 `_build_*_card()`，或对应的组件模块 |
-| 卡片顺序、卡片之间的间距 | `main_window._build_config_page()`（`col.setSpacing`） |
+| 卡片顺序、卡片之间的间距 | `main_window._build_config_page()`（`col.setSpacing`）——卡片自己不再留底部空白 |
 | 卡片内的行距、列宽 | 各 `_build_*` 里的 `QGridLayout` 参数 |
-| 提示行与输入框的间距 | 各卡里的 `hint_row`（固定 26px = 6 顶间距 + 20 文字） |
+| 卡内行距（输入行↔提示行） | 各卡 `grid.setVerticalSpacing(8)`；`hint_row` 只占一行文字高（20px） |
 | 窗口尺寸 | `main_window.init_ui()` 的 `setMinimumSize` / `resize`（配置区可滚动，不必为它留高度） |
 | 尺寸 / 上限 / 下拉选项 | `ui/constants.py` |
 | 与界面无关的取值、校验、格式化 | `ui/helpers.py`（可直接单测，不用起 Qt） |

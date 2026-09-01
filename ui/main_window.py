@@ -218,7 +218,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         card = QGroupBox("配置方案  📁")
         grid = QGridLayout()
         grid.setHorizontalSpacing(8)
-        grid.setVerticalSpacing(0)     # hint 间距由 hint_row 容器 margin 接管
+        grid.setVerticalSpacing(8)     # 行与行之间留 8px，别让输入框和提示行挤在一起
 
         self.profile_combo = QComboBox()
         self.profile_combo.setMinimumHeight(28)   # 与 LineEdit 对齐，避免被 group title 压扁
@@ -249,20 +249,12 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.profile_hint.setObjectName("hint")
         self.profile_hint.setMinimumHeight(20)   # 容纳一行 hint 文字，避免被 grid 拉伸/裁切
         hint_row = QWidget()
-        hint_row.setFixedHeight(26)         # 6(顶间距) + 20(文字)，定死高度，不随外部空间伸缩
+        hint_row.setFixedHeight(20)         # 只放一行文字；行间距交给 grid 的 verticalSpacing
         hint_layout = QHBoxLayout(hint_row)
-        hint_layout.setContentsMargins(0, 6, 0, 0)   # ← 顶间距定死 6px
+        hint_layout.setContentsMargins(0, 0, 0, 0)
         hint_layout.setSpacing(0)
         hint_layout.addWidget(self.profile_hint)
         grid.addWidget(hint_row, 1, 0, 1, 2 + len(buttons))
-
-        # 底部留 8px 呼吸，与其余几张卡结构对齐
-        bottom_spacer = QWidget()
-        bottom_spacer.setMinimumHeight(16)
-        bottom_layout = QHBoxLayout(bottom_spacer)
-        bottom_layout.setContentsMargins(0, 8, 0, 0)
-        bottom_layout.setSpacing(0)
-        grid.addWidget(bottom_spacer, 2, 0, 1, 2 + len(buttons))
 
         card.setLayout(grid)
         return card
@@ -289,7 +281,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         card = QGroupBox("前端连接  🔌")
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(0)     # hint 间距由 hint_row 容器 margin 接管
+        grid.setVerticalSpacing(8)     # 行与行之间留 8px，别让输入框和提示行挤在一起
 
         self.port_input = QLineEdit("8765")
         self.port_input.setPlaceholderText("默认端口 8765")
@@ -305,9 +297,9 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.ws_hint.setMinimumHeight(20)   # 容纳一行 hint 文字，避免被 grid 拉伸裁切
         # 用 QWidget 容器包 hint，强制给一个 6px 的顶部间距，避免与输入框贴边
         hint_row = QWidget()
-        hint_row.setFixedHeight(26)         # 6(顶间距) + 20(文字)，定死高度，不随外部空间伸缩
+        hint_row.setFixedHeight(20)         # 只放一行文字；行间距交给 grid 的 verticalSpacing
         hint_layout = QHBoxLayout(hint_row)
-        hint_layout.setContentsMargins(0, 6, 0, 0)   # ← 顶间距定死 6px
+        hint_layout.setContentsMargins(0, 0, 0, 0)
         hint_layout.setSpacing(0)
         hint_layout.addWidget(self.ws_hint)
         grid.addWidget(hint_row, 1, 0, 1, 2)
@@ -330,7 +322,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.data_group = QGroupBox("获取数据配置  🌐")
         grid = QGridLayout()
         grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(0)     # hint 间距由 hint_row 容器 margin 接管
+        grid.setVerticalSpacing(8)     # 行与行之间留 8px，别让输入框和提示行挤在一起
 
         # 地址可自由填写；在不同仓库之间整套切换交给顶部的「配置方案」
         self.addr_input = QLineEdit(self.current_addr)
@@ -401,20 +393,13 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.data_hint.setMinimumHeight(20)   # 容纳一行 hint 文字，避免被 grid 拉伸/裁切
         # 用 QWidget 容器包 hint，给一个固定的 6px 顶间距，避免与输入框贴边
         hint_row = QWidget()
-        hint_row.setFixedHeight(26)         # 6(顶间距) + 20(文字)，定死高度，不随外部空间伸缩
+        hint_row.setFixedHeight(20)         # 只放一行文字；行间距交给 grid 的 verticalSpacing
         hint_layout = QHBoxLayout(hint_row)
-        hint_layout.setContentsMargins(0, 6, 0, 0)   # ← 顶间距定死 6px
+        hint_layout.setContentsMargins(0, 0, 0, 0)
         hint_layout.setSpacing(0)
         hint_layout.addWidget(self.data_hint)
         grid.addWidget(hint_row, 2, 0, 1, 5)
 
-        # 底部留 8px 呼吸，跟启动按钮之间留出空间，三张卡结构对齐
-        bottom_spacer = QWidget()
-        bottom_spacer.setMinimumHeight(16)
-        bottom_layout = QHBoxLayout(bottom_spacer)
-        bottom_layout.setContentsMargins(0, 8, 0, 0)
-        bottom_layout.setSpacing(0)
-        grid.addWidget(bottom_spacer, 3, 0, 1, 5)
         self._on_flow_changed()
 
         self.data_group.setLayout(grid)

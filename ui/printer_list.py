@@ -31,7 +31,7 @@ class PrinterListWidget(QWidget):
 
         grid = QGridLayout(self)
         grid.setHorizontalSpacing(12)
-        grid.setVerticalSpacing(3)
+        grid.setVerticalSpacing(8)
 
         self.table = QTableWidget(0, len(PRINTER_COLUMNS))
         self.table.setObjectName("history")
@@ -78,20 +78,12 @@ class PrinterListWidget(QWidget):
         self.hint.setObjectName("hint")
         self.hint.setMinimumHeight(20)
         hint_row = QWidget()
-        hint_row.setFixedHeight(26)
+        hint_row.setFixedHeight(20)
         hint_layout = QHBoxLayout(hint_row)
-        hint_layout.setContentsMargins(0, 6, 0, 0)
+        hint_layout.setContentsMargins(0, 0, 0, 0)
         hint_layout.setSpacing(0)
         hint_layout.addWidget(self.hint)
         grid.addWidget(hint_row, 1, 0, 1, 3)
-
-        # 底部留 8px 呼吸，跟 connection/data 卡结构对齐，避免和数据卡标题贴边
-        spacer_row = QWidget()
-        spacer_row.setMinimumHeight(16)
-        spacer_layout = QHBoxLayout(spacer_row)
-        spacer_layout.setContentsMargins(0, 8, 0, 0)
-        spacer_layout.setSpacing(0)
-        grid.addWidget(spacer_row, 2, 0, 1, 3)
 
         self.render()
 
