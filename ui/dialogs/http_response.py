@@ -18,7 +18,8 @@ ROW_HEIGHT = 46          # 46 - 8 = 38 ≥ INPUT_HEIGHT，留 4px 余量
 INPUT_HEIGHT = 34        # 与界面上其它输入框同高（内容 20 + padding 12 + 边框 2）。
                          # QSpinBox 即使去掉箭头，minimumSizeHint 仍报 39，
                          # 不定死就会被行边界裁掉一截。
-CODE_COLUMN_WIDTH = 76   # 三位数；没有微调箭头，不用留那么宽
+CODE_INPUT_WIDTH = 60    # QSpinBox 水平策略是 Fixed，只按内容取 52px，得自己定宽
+CODE_COLUMN_WIDTH = CODE_INPUT_WIDTH + 20   # 输入框 + 左右各 10px 留白
 WHEN_COLUMN_WIDTH = 300
 CELL_MARGIN = (10, 0, 10, 0)   # 只留左右；上下留白靠行高，再加 margin 就得把行撑到 63
 
@@ -83,7 +84,7 @@ class HttpResponseDialog(QDialog):
             # 不显示微调箭头：状态码是直接敲的，箭头既没用又把控件最小高度顶到 39px。
             # 仍是 QSpinBox，范围限制和键盘上下键都还在。
             spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
-            spin.setFixedHeight(INPUT_HEIGHT)
+            spin.setFixedSize(CODE_INPUT_WIDTH, INPUT_HEIGHT)
             spin.valueChanged.connect(
                 lambda value, target=spin: self._paint_code(target, value)
             )
