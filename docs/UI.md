@@ -50,7 +50,7 @@ ui/
 │     D6 提示行：前端发 {"type":"print","printer":"receipt"} 指定打给谁  │
 ├──────────────────────────────────────────────────────────────────────┤
 │  E  获取数据配置  🌐  E1 数据获取地址[输入框]          ← 勾 B2 才显示  │
-│     E2 数据流[单向|双向] E3 超时(秒)[10] E4 [并发|单发] E5 HTTP响应…  │
+│     E2 数据流[单向|双向] E3 超时(秒)[10] E4 [并发|单发]    E5 HTTP响应…│
 │     E6 提示行：POST 到 http://… · 等前端回复超时 8s · 单发排队         │
 └──────────────────────────────────────────────────────────────────────┘
 ```
@@ -88,7 +88,7 @@ A–E 五张卡都是 `QGroupBox`，标题文字里的 emoji 前有两个空格�
 | A4 | 重命名按钮 | 重命名 | `self.profile_buttons[2]` | `rename_profile()` |
 | A5 | 删除按钮 | 删除 | `self.profile_buttons[3]` | `delete_profile()` |
 | A6 | 设为默认按钮 | 设为默认 | `self.profile_buttons[4]` | `set_default_profile()` |
-| A7 | 方案提示行 | 当前方案「X」（默认方案） · 已保存 | `self.profile_hint` | `_update_profile_hint()` |
+| A7 | 方案提示行 | ★ 默认 · 已保存 / 有未保存的修改 | `self.profile_hint` | `_update_profile_hint()` |
 
 按钮的文字 / 提示 / 样式 / 回调集中在 `_build_profile_card()` 里的 `buttons` 列表，
 加减按钮改这一处即可（栅格列号和 hint 跨列数会跟着 `len(buttons)` 走）。
@@ -121,7 +121,7 @@ A–E 五张卡都是 `QGroupBox`，标题文字里的 emoji 前有两个空格�
 | D3 | 编辑按钮 | 编辑 | `printer_list.buttons["编辑"]` | `edit()` |
 | D4 | 删除按钮 | 删除 | `printer_list.buttons["删除"]` | `remove()`，弹窗确认 |
 | D5 | 设为默认按钮 | 设为默认 | `printer_list.buttons["设为默认"]` | `make_default()`：把该行挪到第一行 |
-| D6 | 提示行 | 前端发 …指定打给谁 · 共 N 台 | `printer_list.hint` | `_update_hint()` |
+| D6 | 提示行 | 共 N 台 · 前端用 printer 指定打给谁… | `printer_list.hint` | `_update_hint()`；完整报文写法在表格的 tooltip 里 |
 
 - **第一行就是默认打印机**（「默认」列显示 ★），前端不指定 `printer` 时用它——
   单一事实来源，不额外存一个 default key。
@@ -129,6 +129,7 @@ A–E 五张卡都是 `QGroupBox`，标题文字里的 emoji 前有两个空格�
 - 打印机列表随方案保存在 `printers` 数组；启动时由 `printer_list.validate()` 校验后
   整个列表传给 `start_websocket_server()`。
 - 表格超过 3 行就滚动，高度由 `PRINTER_TABLE_HEIGHT` 定死，不挤压下面的卡片。
+- 渲染后默认选中第一行，否则右侧三个按钮一直灰着，看不出这块能操作。
 
 ## E 获取数据配置卡 — `main_window._build_data_card()`
 
@@ -140,9 +141,11 @@ A–E 五张卡都是 `QGroupBox`，标题文字里的 emoji 前有两个空格�
 | E3 | 超时输入框 | 超时(秒): | `self.timeout_input` / `self.timeout_label` | 校验 `_validate_timeout()`；单向+并发时置灰 |
 | E4 | 分发下拉 | 并发 / 单发 | `self.dispatch_combo` | 选项 `DISPATCH_CHOICES` |
 | E5 | HTTP 响应按钮 | HTTP 响应… | `self.http_resp_btn` | 打开 P5；运行中也能点，改完立即生效 |
-| E6 | 提示行 | POST 到 http://… · 模式摘要 | `self.data_hint` | `_update_data_hint()`，地址不合法显示 ⚠️ |
+| E6 | 提示行 | POST JSON 到 http://… · 双向，超时 10s · 并发 | `self.data_hint` | `_update_data_hint()`，地址不合法显示 ⚠️；完整语义在 tooltip 里 |
 
-E2–E4 三项和地址一样属于「配置方案」，启动服务时通过 `configure_flow()` 下发给 `data_receiver`。
+E2–E4 三项排在一行里各按内容取宽度（`flow_row` 的 QHBoxLayout），
+E5 被 stretch 推到最右——放进 grid 会让第一个下拉把整行吃掉。
+这三项和地址一样属于「配置方案」，启动服务时通过 `configure_flow()` 下发给 `data_receiver`。
 E5 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `http_responses`，由 `configure_responses()` 下发。
 
 ## F / G 启动按钮与状态条 — `main_window._build_action_bar()` + `ui/server_control.py`

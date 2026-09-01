@@ -373,23 +373,28 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         )
         self.dispatch_combo.currentIndexChanged.connect(self._on_flow_changed)
 
-        timeout_cell = QWidget()
-        timeout_box = QHBoxLayout(timeout_cell)
-        timeout_box.setContentsMargins(0, 0, 0, 0)
-        timeout_box.setSpacing(6)
-        timeout_box.addWidget(self.timeout_label)
-        timeout_box.addWidget(self.timeout_input)
-
         self.http_resp_btn = QPushButton("HTTP 响应…")
         self.http_resp_btn.setObjectName("secondary")
         self.http_resp_btn.setToolTip("维护各种情况下返回给设备的 HTTP 码和说明")
         self.http_resp_btn.clicked.connect(self.open_http_responses)
 
+        # 这一行四个控件各按内容取宽度，剩下的空间留给右侧按钮前的空白，
+        # 不像放在 grid 里那样让第一个下拉把整行都吃掉
+        self.flow_combo.setFixedWidth(200)
+        self.dispatch_combo.setFixedWidth(96)
+        flow_row = QWidget()
+        flow_box = QHBoxLayout(flow_row)
+        flow_box.setContentsMargins(0, 0, 0, 0)
+        flow_box.setSpacing(12)
+        flow_box.addWidget(self.flow_combo)
+        flow_box.addWidget(self.timeout_label)
+        flow_box.addWidget(self.timeout_input)
+        flow_box.addWidget(self.dispatch_combo)
+        flow_box.addStretch()
+        flow_box.addWidget(self.http_resp_btn)
+
         grid.addWidget(QLabel("数据流:"), 1, 0)
-        grid.addWidget(self.flow_combo, 1, 1)
-        grid.addWidget(timeout_cell, 1, 2)
-        grid.addWidget(self.dispatch_combo, 1, 3)
-        grid.addWidget(self.http_resp_btn, 1, 4)
+        grid.addWidget(flow_row, 1, 1, 1, 4)
 
         self.data_hint = QLabel()
         self.data_hint.setObjectName("hint")
@@ -436,13 +441,18 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
             return
 
         twoway = self.flow_combo.currentData() == TWOWAY
-        parts = [f"外部系统 POST JSON 到 http://{addr}"]
-        if twoway:
-            parts.append(f"等前端回 external_reply，超时 {self.timeout_input.text().strip()}s 后回 504")
-        else:
-            parts.append("转发给前端后立即回 200")
-        parts.append("单发排队" if self.dispatch_combo.currentData() == SERIAL else "并发处理")
+        parts = [f"POST JSON 到 http://{addr}"]
+        parts.append(
+            f"双向，等前端回复，超时 {self.timeout_input.text().strip()}s"
+            if twoway else "单向，收下即回 200"
+        )
+        parts.append("单发排队" if self.dispatch_combo.currentData() == SERIAL else "并发")
         self.data_hint.setText("　·　".join(parts))
+        # 完整语义放 tooltip，提示行只留关键信息
+        self.data_hint.setToolTip(
+            "双向：推给前端的消息带 expectReply，前端回 external_reply 后才答复设备；"
+            "超时返回 504。单向：转发完立即回 200。"
+        )
 
     # ---- HTTP 应答表 ---- #
 

@@ -119,6 +119,9 @@ class PrinterListWidget(QWidget):
                     item.setToolTip("默认打印机：前端不指定 printer 时用它")
                 table.setItem(row, column, item)
         table.resizeRowsToContents()
+        # 默认选中一行：不然右侧三个按钮一直灰着，看不出这块能操作
+        if self.printers and self._selected_row() is None:
+            table.selectRow(0)
         self._update_buttons()
         self._update_hint()
         self.changed.emit()
@@ -126,12 +129,19 @@ class PrinterListWidget(QWidget):
     def _update_hint(self):
         if not self.printers:
             self.hint.setText("⚠️ 还没有配置打印机，点「添加」加一台")
+            self.table.setToolTip("")
             return
-        default = self.printers[0]
-        names = "、".join(p["key"] for p in self.printers)
+
+        default = self.printers[0]["key"]
         self.hint.setText(
-            f'前端发 {{"type":"print","printer":"{default["key"]}",...}} 指定打给谁'
-            f"　·　共 {len(self.printers)} 台（{names}），不指定时打到 ★ {default['key']}"
+            f"共 {len(self.printers)} 台　·　前端用 printer 指定打给谁，不指定时打到 ★ {default}"
+        )
+        # 完整的报文写法放进 tooltip，提示行只留一句话
+        self.table.setToolTip(
+            "前端发：\n"
+            f'{{"type":"print","printer":"{default}","jobId":"a1",\n'
+            ' "format":"base64","data":"…"}\n'
+            "format 可选 base64（PDF 等）或 text（ZPL/TSPL 指令）"
         )
 
     def _update_buttons(self):

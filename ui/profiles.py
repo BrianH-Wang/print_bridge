@@ -161,10 +161,10 @@ class ProfileMixin:
             self.profile_hint.setText("★ 为默认方案，启动程序时自动载入")
             return
 
-        default_tag = "（默认方案）" if self.current_profile == self.default_profile else ""
+        star = "★ " if self.current_profile == self.default_profile else ""
         self.profile_hint.setText(
-            f"当前方案「{self.current_profile}」{default_tag}"
-            + ("　·　有未保存的修改，点「保存」写回本方案" if self._is_dirty() else "　·　已保存")
+            f"{star}{self.current_profile}"
+            + ("　·　有未保存的修改" if self._is_dirty() else "　·　已保存")
         )
 
     def on_profile_selected(self, index):
