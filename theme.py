@@ -57,6 +57,7 @@ PALETTES = {
         "idle_fg": "#4a515b",
         "run_bg": "#e3f6ea",
         "run_fg": "#1d7a45",
+        "warn_fg": "#b06a00",
         "stop_bg": "#f1f2f5",
         "stop_fg": "#6b7280",
         "err_bg": "#fdecec",
@@ -98,6 +99,7 @@ PALETTES = {
         "idle_fg": "#b6bec8",
         "run_bg": "#1b3a2a",
         "run_fg": "#5fd694",
+        "warn_fg": "#e8a33d",
         "stop_bg": "#262c33",
         "stop_fg": "#99a3af",
         "err_bg": "#3d2225",
@@ -135,7 +137,7 @@ QScrollArea#configArea, QWidget#configPage {{ background: transparent; border: n
 QLabel {{ color: {text}; }}
 QLabel#hint {{ color: {muted}; }}
 
-QLineEdit, QComboBox {{
+QLineEdit, QComboBox, QSpinBox, QDateTimeEdit {{
     border: 1px solid {input_border};
     border-radius: 6px;
     padding: 6px 8px;
@@ -143,8 +145,10 @@ QLineEdit, QComboBox {{
     color: {text};
     min-height: 20px;
 }}
-QLineEdit:focus, QComboBox:focus {{ border: 1px solid {primary}; }}
-QLineEdit:disabled, QComboBox:disabled {{
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDateTimeEdit:focus {{
+    border: 1px solid {primary};
+}}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled {{
     background: {disabled_bg};
     color: {disabled_text};
 }}
@@ -349,6 +353,11 @@ def build_stylesheet(mode):
         arrow_icon_disabled=_arrow_icon_path(mode, "disabled_text"),
         **PALETTES[mode],
     )
+
+
+def active_palette(app, mode):
+    """当前实际生效的那套配色，供需要按语义取色的控件使用。"""
+    return PALETTES[resolve(app, mode)]
 
 
 def resolve(app, mode):
