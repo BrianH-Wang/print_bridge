@@ -261,7 +261,9 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
 
     def _build_function_card(self):
         card = QGroupBox("功能选择  🛠")
+        card.setObjectName("compact")   # 只有一行内容，用紧凑内边距
         row = QHBoxLayout()
+        row.setSpacing(16)              # 两个开关之间拉开点，别粘在一起
         self.print_checkbox = QCheckBox("自动打印")
         self.data_checkbox = QCheckBox("获取数据")
         self.print_checkbox.setChecked(False)  # 自动打印默认不启用

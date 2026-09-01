@@ -101,6 +101,9 @@ A–E 五张卡都是 `QGroupBox`，标题文字里的 emoji 前有两个空格�
 | B1 | 自动打印开关 | 自动打印 | `self.print_checkbox` |
 | B2 | 获取数据开关 | 获取数据 | `self.data_checkbox` |
 
+这张卡只有一行内容，用 `objectName="compact"` 走小一号的上下内边距
+（样式表 `QGroupBox#compact`），否则一行复选框会撑出一张空卡。
+
 勾选状态控制 D / E 两张卡的显隐（`toggle_modules()`）。只勾 B1 = 只打印，HTTP 服务不启动。
 运行中这两个复选框不用 `setEnabled(False)`——macOS 上禁用后的勾选标记几乎看不见，改为屏蔽鼠标事件。
 
@@ -211,7 +214,7 @@ E5 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `h
 
 - 颜色全部走 `PALETTES[light|dark]` 里的 token，样式表 `_TEMPLATE` 只引用 token 名，
   **改颜色不用动样式表结构**。
-- 常用选择器：`QGroupBox`（卡片）、`QLabel#hint`（灰色提示行）、`QLabel#title`、
+- 常用选择器：`QGroupBox`（卡片）、`QGroupBox#compact`（只有一行内容的卡）、`QLabel#hint`（灰色提示行）、`QLabel#title`、
   `QLabel#status[state="…"]`、`QPushButton`（主按钮）/`#secondary`/`#danger`/`#seg`、
   `QLineEdit, QComboBox`（输入控件）、`QTableWidget#history`、`QPlainTextEdit#log`、
   `QTabBar::tab`。

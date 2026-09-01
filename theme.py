@@ -119,6 +119,9 @@ QGroupBox {{
     background: {surface};
     color: {text};
 }}
+/* 只有一行内容的卡（功能选择）：上下内边距减半，否则一行复选框撑出一张空卡 */
+QGroupBox#compact {{ padding: 6px 18px 10px 18px; }}
+
 QGroupBox::title {{
     subcontrol-origin: margin;
     subcontrol-position: top left;
