@@ -1,0 +1,97 @@
+name: build
+
+# 三平台并行打包,各自上传 artifact
+on:
+  workflow_dispatch:
+  push:
+    branches: [master]
+    tags: ['v*']
+
+jobs:
+  build:
+    name: build-${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14          # arm64 (Apple Silicon runner)
+            artifact_name: print-bridge-macos-arm64
+          - os: macos-13          # x86_64 (Intel runner)
+            artifact_name: print-bridge-macos-x64
+          - os: windows-2022
+            artifact_name: print-bridge-windows-x64
+          - os: ubuntu-22.04
+            artifact_name: print-bridge-linux-x64
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install system libs (Linux)
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libcups2-dev
+
+      - name: Install Python deps
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m venv .venv
+          # Linux/macOS 用 bash,Windows 这里 shell=bash 实际被 GHA 重定向成 Git Bash,
+          # 在 PowerShell 阶段前不会执行;Windows 步骤写在下面。
+          .venv/bin/python -m pip install --upgrade pip
+          .venv/bin/python -m pip install pyinstaller PyQt6 websockets
+          if [ "$RUNNER_OS" = "Linux" ] || [ "$RUNNER_OS" == "macOS" ]; then
+            .venv/bin/python -m pip install pycups || true
+          fi
+        env:
+          RUNNER_OS: ${{ runner.os }}
+
+      - name: Install Windows-only deps
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          .venv\Scripts\python.exe -m pip install --upgrade pip
+          .venv\Scripts\python.exe -m pip install pyinstaller PyQt6 websockets pywin32
+
+      - name: Build (Linux/Windows)
+        if: runner.os != 'macOS'
+        shell: bash
+        run: .venv/bin/python -m PyInstaller --noconfirm print_bridge.spec
+        # 注意:Windows runner 上 `bash` 即 Git Bash,可直接跑上述命令。
+
+      - name: Build (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          .venv/bin/python -m PyInstaller --noconfirm print_bridge.spec
+          bash scripts/make_dmg.sh
+
+      - name: Zip artifact (Linux/Windows)
+        if: runner.os != 'macOS'
+        shell: pwsh
+        run: |
+          Compress-Archive -Path dist/print_bridge -DestinationPath ${{ matrix.artifact_name }}.zip
+
+      - name: Upload artifact (Linux/Windows)
+        if: runner.os != 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: ${{ matrix.artifact_name }}.zip
+          if-no-files-found: error
+
+      - name: Upload artifact (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: |
+            dist/Print Bridge.dmg
+            dist/Print Bridge.app
+          if-no-files-found: error
