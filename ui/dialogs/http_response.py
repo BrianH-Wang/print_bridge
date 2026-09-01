@@ -19,9 +19,12 @@ INPUT_HEIGHT = 34        # 与界面上其它输入框同高（内容 20 + paddi
                          # QSpinBox 即使去掉箭头，minimumSizeHint 仍报 39，
                          # 不定死就会被行边界裁掉一截。
 CODE_INPUT_WIDTH = 60    # QSpinBox 水平策略是 Fixed，只按内容取 52px，得自己定宽
-CODE_COLUMN_WIDTH = CODE_INPUT_WIDTH + 20   # 输入框 + 左右各 10px 留白
+CODE_COLUMN_WIDTH = CODE_INPUT_WIDTH + 16   # 输入框 + Qt 左右各 6px 内缩，再留 4px 余量给焦点环
 WHEN_COLUMN_WIDTH = 300
-CELL_MARGIN = (10, 0, 10, 0)   # 只留左右；上下留白靠行高，再加 margin 就得把行撑到 63
+# 单元格控件不再自己加 margin：Qt 给 cell widget 的矩形本来就左右各内缩 6px，
+# 正好等于表头 QHeaderView::section 和文本格 ::item 的 6px 内边距——
+# 三者对齐；再叠 margin 既错位又会把控件挤出容器、右边被裁。
+CELL_MARGIN = (0, 0, 0, 0)
 
 
 class HttpResponseDialog(QDialog):
@@ -88,7 +91,7 @@ class HttpResponseDialog(QDialog):
             spin.valueChanged.connect(
                 lambda value, target=spin: self._paint_code(target, value)
             )
-            self.table.setCellWidget(row, 2, self._cell(spin))
+            self.table.setCellWidget(row, 2, self._cell(spin, align_left=True))
             self.code_boxes[key] = spin
 
             edit = QLineEdit()
@@ -147,14 +150,22 @@ class HttpResponseDialog(QDialog):
         return item
 
     @staticmethod
-    def _cell(widget):
-        """给单元格里的控件套一层留白，别让输入框贴着行边缘。"""
+    def _cell(widget, align_left=False):
+        """把控件放进单元格。
+
+        align_left: 定宽控件（状态码框）要显式左对齐，否则布局会把它居中，
+        比左边可伸缩的说明框往右偏 2px，跟表头对不齐。
+        """
         box = QWidget()
         box.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)  # 露出隔行底色
         layout = QHBoxLayout(box)
         layout.setContentsMargins(*CELL_MARGIN)
         layout.setSpacing(0)
-        layout.addWidget(widget)
+        if align_left:
+            layout.addWidget(widget, 0,
+                             Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
+        else:
+            layout.addWidget(widget)
         return box
 
     def _paint_code(self, spin, value):
