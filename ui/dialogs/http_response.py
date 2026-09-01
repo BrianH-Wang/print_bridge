@@ -3,7 +3,7 @@
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import (
-    QAbstractItemView, QApplication, QDialog, QDialogButtonBox, QHBoxLayout,
+    QAbstractItemView, QAbstractSpinBox, QApplication, QDialog, QDialogButtonBox, QHBoxLayout,
     QHeaderView, QLabel, QLineEdit, QSpinBox, QTableWidget, QTableWidgetItem,
     QVBoxLayout, QWidget,
 )
@@ -12,10 +12,13 @@ from data_receiver import RESPONSE_DEFAULTS, RESPONSE_LABELS
 from theme import SYSTEM, active_palette
 
 # 表格给单元格控件的可用高度 = 行高 - 8（Qt 的固定内缩）。
-# 控件最小高度：说明框 34px（内容 20 + padding 12 + 边框 2）、
-# 状态码框带上下箭头要 39px。行高不够时边框会被行边界裁掉一截。
-ROW_HEIGHT = 50          # 50 - 8 = 42 ≥ 39，留 3px 余量
-CODE_COLUMN_WIDTH = 96   # 三位数 + 微调箭头
+# 输入框最小高度 34px（内容 20 + padding 12 + 边框 2）；
+# 行高不够时边框会被行边界裁掉一截。
+ROW_HEIGHT = 46          # 46 - 8 = 38 ≥ INPUT_HEIGHT，留 4px 余量
+INPUT_HEIGHT = 34        # 与界面上其它输入框同高（内容 20 + padding 12 + 边框 2）。
+                         # QSpinBox 即使去掉箭头，minimumSizeHint 仍报 39，
+                         # 不定死就会被行边界裁掉一截。
+CODE_COLUMN_WIDTH = 76   # 三位数；没有微调箭头，不用留那么宽
 WHEN_COLUMN_WIDTH = 300
 CELL_MARGIN = (10, 0, 10, 0)   # 只留左右；上下留白靠行高，再加 margin 就得把行撑到 63
 
@@ -77,6 +80,10 @@ class HttpResponseDialog(QDialog):
             spin = QSpinBox()
             spin.setRange(100, 599)
             spin.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            # 不显示微调箭头：状态码是直接敲的，箭头既没用又把控件最小高度顶到 39px。
+            # 仍是 QSpinBox，范围限制和键盘上下键都还在。
+            spin.setButtonSymbols(QAbstractSpinBox.ButtonSymbols.NoButtons)
+            spin.setFixedHeight(INPUT_HEIGHT)
             spin.valueChanged.connect(
                 lambda value, target=spin: self._paint_code(target, value)
             )
@@ -84,6 +91,7 @@ class HttpResponseDialog(QDialog):
             self.code_boxes[key] = spin
 
             edit = QLineEdit()
+            edit.setFixedHeight(INPUT_HEIGHT)
             # 占位符说明从表格列挪到这里：那一列只讲"什么时候返回"，不混编辑提示
             hints = ["留空即用默认值"]
             if placeholder:

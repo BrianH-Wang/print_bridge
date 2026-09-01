@@ -203,7 +203,7 @@ E5 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `h
 | P2 | 历史筛选条件 | `AdvancedSearchDialog`（`advanced_search.py`） | 历史筛选 |
 | P3 | 历史搜索 | `HistorySearchDialog`（`history_search.py`） | Y7 |
 | P4 | 确认与错误提示 | `QMessageBox` | 切换方案有未保存修改、删除、校验失败等 |
-| P5 | HTTP 响应配置 | `HttpResponseDialog`（`http_response.py`） | E5，7 个场景各自的状态码与说明，带「全部恢复默认」；行高 `ROW_HEIGHT`、列宽 `WHEN_COLUMN_WIDTH`/`CODE_COLUMN_WIDTH`、单元格留白 `CELL_MARGIN`；状态码按 2xx/4xx/5xx 上色（`_paint_code()`） |
+| P5 | HTTP 响应配置 | `HttpResponseDialog`（`http_response.py`） | E5，7 个场景各自的状态码与说明，带「全部恢复默认」；行高 `ROW_HEIGHT`、列宽 `WHEN_COLUMN_WIDTH`/`CODE_COLUMN_WIDTH`、单元格留白 `CELL_MARGIN`；状态码按 2xx/4xx/5xx 上色（`_paint_code()`）；状态码框不显示微调箭头，高度与其它输入框统一为 `INPUT_HEIGHT` |
 | P6 | 添加 / 编辑打印机 | `PrinterDialog`（`printer.py`） | D2 / D3，填 key、备注、方式、队列或 IP:端口，带「测试连接」 |
 
 `HistorySearchDialog` 通过 `self.panel` 拿记录、图片和重发能力，parent 必须是 `HistoryPanel`。
