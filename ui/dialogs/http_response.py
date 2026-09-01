@@ -11,10 +11,13 @@ from PyQt6.QtWidgets import (
 from data_receiver import RESPONSE_DEFAULTS, RESPONSE_LABELS
 from theme import SYSTEM, active_palette
 
-ROW_HEIGHT = 46          # 容得下输入框 + 上下留白，两行之间不贴住
+# 表格给单元格控件的可用高度 = 行高 - 8（Qt 的固定内缩）。
+# 控件最小高度：说明框 34px（内容 20 + padding 12 + 边框 2）、
+# 状态码框带上下箭头要 39px。行高不够时边框会被行边界裁掉一截。
+ROW_HEIGHT = 50          # 50 - 8 = 42 ≥ 39，留 3px 余量
 CODE_COLUMN_WIDTH = 96   # 三位数 + 微调箭头
 WHEN_COLUMN_WIDTH = 300
-CELL_MARGIN = (10, 7, 10, 7)   # 单元格内控件的四周留白
+CELL_MARGIN = (10, 0, 10, 0)   # 只留左右；上下留白靠行高，再加 margin 就得把行撑到 63
 
 
 class HttpResponseDialog(QDialog):
