@@ -37,7 +37,7 @@ HISTORY_FIXED_COLUMNS = (
 )
 THUMB_SIZE = QSize(72, 40)
 ROW_HEIGHT = 48
-MIN_VISIBLE_ROWS = 7  # 表格初始至少能看见的行数
+MIN_VISIBLE_ROWS = 4  # 表格初始至少能看见的行数（多了会把窗口最小高度顶起来）
 
 # 默认要展示的数据列；启动时就创建出来，即使本次没收到也保留"-"占位。
 DEFAULT_DATA_COLUMNS = ["expressNo", "weight", "length", "width", "height"]

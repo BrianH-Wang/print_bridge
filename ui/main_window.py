@@ -14,9 +14,9 @@ import threading
 from PyQt6.QtCore import QSettings, Qt
 from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import (
-    QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QGridLayout, QGroupBox,
-    QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QTabWidget,
-    QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QCheckBox, QComboBox, QDialog, QFrame, QGridLayout,
+    QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QScrollArea,
+    QTabWidget, QVBoxLayout, QWidget,
 )
 
 from data_receiver import (
@@ -52,6 +52,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self._applying_profile = False   # 程序在回填输入框，别把它当成用户改动
         self._ui_ready = False           # 建界面途中控件还不齐，别去读它们
         self._applied_config = None      # 上一次落到界面上的配置，用来判断"改过没有"
+        self._first_run = not self.settings.value("profiles")
         self.profiles = self._load_profiles()
         names = [p["name"] for p in self.profiles]
         self.default_profile = self.settings.value("default_profile")
@@ -87,19 +88,18 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
     def init_ui(self):
         self.setObjectName("root")
         self.setWindowTitle("Print Bridge (V1.0.0)")
-        # 最小高度需要容纳 4 张配置卡 + 启动按钮 + 状态 + tabs 页头 + 表格 7 行。
-        self.setMinimumSize(880, 880)
-        self.resize(1080, 880)
+        # 配置区已经挪进可滚动的页签，窗口不必再为它留高度：
+        # 只要容纳顶栏 + 启停条 + 页签头 + 表格几行即可，笔记本屏幕也放得下。
+        self.setMinimumSize(900, 620)
+        self.resize(1080, 820)
 
         layout = QVBoxLayout()
         layout.setContentsMargins(16, 12, 16, 16)
         layout.setSpacing(10)
 
         layout.addLayout(self._build_header())
-
-        # 单列纵向堆叠：状态卡和配置共享同一列，
-        # 配置项不会被右侧固定宽度压扁。
-        layout.addLayout(self._build_left_column(), 0)
+        # 启停和状态常驻：在任何页签下都要能一眼看到服务跑没跑、能随手停
+        layout.addLayout(self._build_action_bar())
 
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)      # macOS 下默认会居中并压缩页签，这里改为左对齐
@@ -107,6 +107,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.log_panel = LogPanel(self)
         self.history = HistoryPanel(self.settings, self)
         self.history.countChanged.connect(self._update_history_tab_title)
+        self.config_tab_index = self.tabs.addTab(self._build_config_page(), "配置 ⚙")
         self.tabs.addTab(self.log_panel, "日志输出 📋")
         self.history_tab_index = self.tabs.addTab(self.history, "接收历史 📜")
         layout.addWidget(self.tabs, 1)
@@ -120,32 +121,55 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self._refresh_profile_combo()
         self._apply_profile(self.profiles[self._profile_index(self.current_profile)])
 
-    def _build_left_column(self):
-        col = QVBoxLayout()
-        col.setSpacing(8)
-        profile_card = self._build_profile_card()
-        function_card = self._build_function_card()
-        connection_card = self._build_connection_card()
-        print_card = self._build_print_card()
-        data_card = self._build_data_card()
-        # 连接/数据卡有两行（输入框+提示），最小高度不写死：
-        # 这里取值时样式表还没应用（_apply_theme 在 init_ui 之后），算出来会偏小，
-        # 卡片被压扁后 hint 会压到输入框上。交给控件自身的 minimumSizeHint 实时计算。
-        col.addWidget(profile_card)
-        col.addWidget(function_card)
-        col.addWidget(connection_card)
-        col.addWidget(print_card)
-        col.addWidget(data_card)
+        # 头一次用的人先落在「配置」上；配过之后日常关心的是日志
+        self.tabs.setCurrentIndex(
+            self.config_tab_index if self._first_run else self.tabs.indexOf(self.log_panel)
+        )
+
+    def _build_action_bar(self):
+        """启动/停止 + 状态，常驻在页签上方。"""
+        row = QHBoxLayout()
+        row.setSpacing(10)
 
         self.start_btn = QPushButton("启动服务器")
+        self.start_btn.setMinimumWidth(160)
         self.start_btn.clicked.connect(self.toggle_server)
-        col.addWidget(self.start_btn)
+        row.addWidget(self.start_btn)
 
         self.status_label = QLabel("状态：就绪")
         self.status_label.setObjectName("status")
-        col.addWidget(self.status_label)
+        row.addWidget(self.status_label, 1)
         self._set_status("就绪，等待启动", "idle")
-        return col
+        return row
+
+    def _build_config_page(self):
+        """「配置」页签：五张卡纵向堆叠，装进滚动区。
+
+        套 QScrollArea 是为了让窗口能缩小——卡片加到五张之后，
+        直接堆在主界面上会把窗口最小高度顶到 1400 多，笔记本屏放不下。
+        """
+        col = QVBoxLayout()
+        col.setContentsMargins(0, 4, 6, 4)   # 右边 6px 留给滚动条，卡片不贴边
+        col.setSpacing(8)
+        # 连接/数据卡有两行（输入框+提示），最小高度不写死：
+        # 卡片被压扁后 hint 会压到输入框上，交给控件自身的 minimumSizeHint 实时计算。
+        for card in (self._build_profile_card(), self._build_function_card(),
+                     self._build_connection_card(), self._build_print_card(),
+                     self._build_data_card()):
+            col.addWidget(card)
+        col.addStretch()
+
+        page = QWidget()
+        page.setObjectName("configPage")
+        page.setLayout(col)
+
+        area = QScrollArea()
+        area.setObjectName("configArea")
+        area.setWidgetResizable(True)
+        area.setFrameShape(QFrame.Shape.NoFrame)
+        area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        area.setWidget(page)
+        return area
 
     def _build_header(self):
         row = QHBoxLayout()
@@ -398,18 +422,6 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
     def toggle_modules(self):
         self.print_group.setVisible(self.print_checkbox.isChecked())
         self.data_group.setVisible(self.data_checkbox.isChecked())
-        self._sync_min_height()
-
-    def _sync_min_height(self):
-        """最小高度按布局实际需要计算。
-
-        写死的数字撑不住时，卡片会被压扁，hint 会被挤到和输入框重叠，
-        而且压扁与否随自动打印卡的显隐变化。
-        """
-        self.layout().activate()
-        self.setMinimumHeight(self.layout().minimumSize().height())
-        if self.height() < self.minimumHeight():
-            self.resize(self.width(), self.minimumHeight())
 
     def _update_ws_hint(self):
         port = self.port_input.text().strip() or "8765"
@@ -518,7 +530,6 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.setStyleSheet(apply_theme(QApplication.instance(), self.theme_mode))
         # 样式表会改变卡片的内容高度（groupbox 的 margin-top / padding），
         # 换完样式重算一次最小高度，否则首帧的最小高按未套样式的尺寸算，偏小。
-        self._sync_min_height()
 
     def set_theme(self, mode):
         self.theme_mode = mode

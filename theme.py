@@ -40,6 +40,8 @@ PALETTES = {
         "secondary_bg": "#ebedf1",
         "secondary_hover": "#dfe2e8",
         "secondary_text": "#4a515b",
+        "scroll_handle": "#cfd4dc",
+        "scroll_handle_hover": "#b6bdc8",
         "seg_track": "#e9ebef",
         "seg_fg": "#5a626d",
         "seg_active_bg": "#ffffff",
@@ -79,6 +81,8 @@ PALETTES = {
         "secondary_bg": "#2a3038",
         "secondary_hover": "#343b45",
         "secondary_text": "#c3cad3",
+        "scroll_handle": "#3a424c",
+        "scroll_handle_hover": "#4a535f",
         "seg_track": "#23282f",
         "seg_fg": "#98a2ae",
         "seg_active_bg": "#3a424c",
@@ -122,6 +126,8 @@ QGroupBox::title {{
     padding: 0 6px;
     color: {text};
 }}
+
+QScrollArea#configArea, QWidget#configPage {{ background: transparent; border: none; }}
 
 QLabel {{ color: {text}; }}
 QLabel#hint {{ color: {muted}; }}
@@ -173,6 +179,8 @@ QPushButton {{
 }}
 QPushButton:hover {{ background: {primary_hover}; }}
 QPushButton:pressed {{ background: {primary_pressed}; }}
+/* 主按钮禁用时也要看得出来：没这条时「重发选中」灰不掉，看着还能点 */
+QPushButton:disabled {{ background: {disabled_bg}; color: {disabled_text}; }}
 
 QPushButton#danger {{ background: {danger}; }}
 QPushButton#danger:hover {{ background: {danger_hover}; }}
@@ -255,11 +263,27 @@ QTabBar::tab {{
     font-weight: 600;
 }}
 QTabBar::tab:hover {{ color: {text}; background: {secondary_bg}; }}
+/* 选中态用下划线而不是整块主色：正上方就是蓝色的启动按钮，两个蓝块会打架 */
 QTabBar::tab:selected {{
-    background: {primary};
-    color: #ffffff;
-    border-color: {primary};
+    background: transparent;
+    color: {primary};
+    border-bottom: 2px solid {primary};
+    border-radius: 0;
 }}
+
+QScrollBar:vertical {{
+    background: transparent;
+    width: 10px;
+    margin: 2px 0;
+}}
+QScrollBar::handle:vertical {{
+    background: {scroll_handle};
+    border-radius: 5px;
+    min-height: 32px;
+}}
+QScrollBar::handle:vertical:hover {{ background: {scroll_handle_hover}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 
 QPlainTextEdit#log {{
     background: {log_bg};
