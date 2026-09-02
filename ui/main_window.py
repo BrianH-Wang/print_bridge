@@ -422,8 +422,10 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         if channels is not None:
             channels.base_addr = host   # 通道对话框拿它拼 curl 示例
         count = len(channels.channels) if channels else 0
+        # 不写 /… 占位：路径就在下面的通道表里列着，这里再摆个省略号
+        # 只会让人以为地址没显示全
         self.data_hint.setText(
-            f"设备 POST 到 http://{host}/…　·　{count} 条通道按路径分流"
+            f"设备 POST 到 http://{host}　·　{count} 条通道按路径分流"
         )
         self.data_hint.setToolTip(
             "地址里的路径部分只是给人看的示例，真正决定收不收、怎么收的是下面的通道表。\n"

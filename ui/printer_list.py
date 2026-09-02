@@ -132,7 +132,7 @@ class PrinterListWidget(QWidget):
         self.table.setToolTip(
             "前端发：\n"
             f'{{"type":"print","printer":"{default}","jobId":"a1",\n'
-            ' "format":"base64","data":"…"}\n'
+            ' "format":"base64","data":"<base64 内容>"}\n'
             "format 可选 base64（PDF 等）或 text（ZPL/TSPL 指令）"
         )
 

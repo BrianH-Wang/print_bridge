@@ -181,7 +181,7 @@ class ChannelDialog(QDialog):
         lines = ["设备这样调用：", "",
                  f"  curl -X POST {url} \\",
                  '       -H "Content-Type: application/json" \\',
-                 """       -d '{"code":"…"}'""", ""]
+                 """       -d '{"code":"CCSL2026083100123"}'""", ""]
 
         role = getattr(self, "pair_role_combo", None)
         pair_role = role.currentData() if role is not None else PAIR_NONE
