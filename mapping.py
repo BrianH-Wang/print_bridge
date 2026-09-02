@@ -242,10 +242,16 @@ def make_outbound(envelope=STANDARD, message_type=DEFAULT_MESSAGE_TYPE,
     }
 
 
-def build_outbound(channel, data, message_id, expect_reply=False):
-    """组装推给前端的整条报文。返回 (报文, 问题清单)。"""
+def build_outbound(channel, data, message_id, expect_reply=False, extra_fields=None):
+    """组装推给前端的整条报文。返回 (报文, 问题清单)。
+
+    extra_fields: 配对合流来的字段，转译之后、组装之前并进去 ——
+    这样模板里写 {{imageBase64}} 也能取到从另一条通道并过来的值。
+    """
     channel = channel or {}
     mapped, problems = map_fields(data, channel.get("mapping"))
+    if extra_fields and isinstance(mapped, dict):
+        mapped = {**mapped, **extra_fields}
     outbound = channel.get("outbound") or make_outbound()
 
     variables = {

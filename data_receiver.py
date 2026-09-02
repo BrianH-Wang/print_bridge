@@ -14,7 +14,13 @@ from channels import (
     build_body, describe_channel, http_status_for, make_channel, route,
 )
 from logger import print_log, shorten
-from mapping import build_outbound
+from mapping import build_outbound, map_fields
+from pairing import (
+    ATTACH, PRIMARY, attach_channels, clear_pairs, describe_pair, expire_pairs,
+    pair_of, role_of, store_attach, take_attaches,
+)
+from pairing import ERROR as PAIR_ERROR
+from pairing import merge as merge_attaches
 
 DEFAULT_PORT = 13213
 
@@ -101,6 +107,7 @@ def configure_channels(channels):
     with _channels_lock:
         _channels[:] = clean
         _serial_states.clear()   # 通道换了，旧队列的号作废，留着会让新请求等一个永不到来的号
+    clear_pairs()                # 组和配对字段可能都变了，旧的暂存数据对不上
 
     print_log(f"🔁 接收通道 {len(clean)} 条：")
     for channel in clean:
@@ -108,7 +115,8 @@ def configure_channels(channels):
         print_log(f"   · {describe_channel(channel)}"
                   f" · {'单发' if channel['dispatch'] == SERIAL else '并发'}"
                   + (f" · 超时 {channel['timeout']:g}s" if channel["flow"] == TWOWAY else "")
-                  + f" · {extra}")
+                  + f" · {extra}"
+                  + (f" · 配对 {describe_pair(channel)}" if channel.get("pair") else ""))
 
 
 def configure_flow(mode=ONEWAY, timeout=DEFAULT_REPLY_TIMEOUT, dispatch=CONCURRENT):
@@ -481,14 +489,94 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         else:
             self._dispatch(data, channel, deadline)
 
+    def _hold_for_pairing(self, data, channel):
+        """附加通道：转译后存进暂存区，收下就回，不广播给前端。
+
+        它的数据要等主报文来了一起发。这条路径天生是单向的——所以配对里
+        「先到的那条怎么应答」根本不是问题。
+        """
+        pair = pair_of(channel)
+        mapped, problems = map_fields(data, channel.get("mapping"))
+        if problems:
+            print_log(f"❌ [{channel['key']}] 字段转译失败: {'；'.join(problems)}")
+            self._reply("map_failed", channel=channel, error="；".join(problems))
+            return
+
+        key = mapped.get(pair["field"]) if isinstance(mapped, dict) else None
+        if key in (None, ""):
+            message = f"配对字段 {pair['field']} 取不到值"
+            print_log(f"❌ [{channel['key']}] {message}")
+            self._reply("map_failed", channel=channel, error=message)
+            return
+
+        total = store_attach(pair["group"], str(key), channel["key"], mapped,
+                             pair["keep"], pair["max_pending"])
+        print_log(f"🧩 [{channel['key']}] 已暂存待配对 {pair['field']}={key}（暂存区 {total} 条）")
+        _record_history(data, 0, None, channel["key"])
+        self._reply("ok", extra={"forwarded": 0}, channel=channel)
+
+    def _collect_pair(self, channel, mapped, deadline):
+        """主报文：等同组的附加数据齐了再走。返回 (要并进去的字段, 该不该继续)。"""
+        pair = pair_of(channel)
+        wanted = attach_channels(channel_list(), pair["group"])
+        if not wanted:
+            return {}, True   # 组里没有附加通道，没什么可等的
+
+        key = mapped.get(pair["field"]) if isinstance(mapped, dict) else None
+        if key in (None, ""):
+            message = f"配对字段 {pair['field']} 取不到值"
+            print_log(f"❌ [{channel['key']}] {message}")
+            self._reply("map_failed", channel=channel, error=message)
+            return {}, False
+
+        # 等图和等前端回复共用同一份预算：设备最多等它配的那个秒数，
+        # 不会因为先等了 5 秒图就把总时长变成 wait + timeout
+        wait_until = min(time.monotonic() + pair["wait"], deadline)
+        found, missing = take_attaches(pair["group"], str(key),
+                                       [c["key"] for c in wanted], wait_until)
+
+        if missing:
+            names = "、".join(missing)
+            if pair["on_missing"] == PAIR_ERROR:
+                print_log(f"⏱ [{channel['key']}] 等不到配对数据（{names}），已拒绝本条")
+                self._reply("pair_timeout", channel=channel,
+                            missing=names, timeout=f"{pair['wait']:g}")
+                return {}, False
+            print_log(f"⚠️ [{channel['key']}] 等不到配对数据（{names}），按缺项照发")
+
+        specs = {c["key"]: pair_of(c) for c in wanted}
+        extra = merge_attaches(mapped, found, specs)
+        if extra:
+            print_log(f"🧩 [{channel['key']}] 已合并 {len(found)} 份附加数据："
+                      f"{'、'.join(extra)}")
+        return extra, True
+
     def _dispatch(self, data, channel, deadline):
         """转译字段、组装报文、推给前端；双向模式下等前端回一条再答复设备。"""
+        if role_of(channel) == ATTACH:
+            self._hold_for_pairing(data, channel)
+            return
+
         twoway = channel["flow"] == TWOWAY
+        extra_fields = None
+
+        if role_of(channel) == PRIMARY:
+            # 先按本通道的映射算一遍，才知道配对键的值是多少
+            mapped, problems = map_fields(data, channel.get("mapping"))
+            if problems:
+                print_log(f"❌ [{channel['key']}] 字段转译失败: {'；'.join(problems)}")
+                self._reply("map_failed", channel=channel, error="；".join(problems))
+                return
+            extra_fields, keep_going = self._collect_pair(channel, mapped, deadline)
+            if not keep_going:
+                return
 
         # id 提前生成：自定义报文模板里要用 {{__id}} 把它嵌进前端认识的字段里，
         # 双向还要先按这个 id 开好等待槽——本机前端回得可能比广播这行还快。
         msg_id = new_message_id()
-        payload, problems = build_outbound(channel, data, msg_id, expect_reply=twoway)
+        payload, problems = build_outbound(channel, data, msg_id,
+                                           expect_reply=twoway,
+                                           extra_fields=extra_fields)
 
         if problems:
             # 转译不过就别往前端发半成品，直接告诉设备哪里不对

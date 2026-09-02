@@ -13,6 +13,8 @@ from channels import KEY_PATTERN as CHANNEL_KEY_PATTERN
 from mapping import (
     DEFAULT_MESSAGE_TYPE, PASSTHROUGH, STANDARD, make_mapping, make_outbound,
 )
+from pairing import NONE as PAIR_NONE
+from pairing import make_pair
 from printer_utils import (
     DEFAULT_PRINTER_KEY, DEFAULT_RAW_PORT, KEY_PATTERN, SYSTEM_PRINTER, make_printer,
 )
@@ -144,6 +146,21 @@ def sanitize_outbound(raw):
     return None if is_default else clean
 
 
+def sanitize_pair(raw):
+    """洗一遍配对设置；不参与配对（等于没配）时返回 None。"""
+    if not isinstance(raw, dict):
+        return None
+    clean = make_pair(
+        raw.get("role"), raw.get("group"), raw.get("field"), raw.get("value"),
+        raw.get("rename"), raw.get("wait"), raw.get("keep"),
+        raw.get("on_missing"), raw.get("max_pending"),
+    )
+    # 没有配对字段就配不了对，当作没开
+    if clean["role"] == PAIR_NONE or not clean["field"]:
+        return None
+    return clean
+
+
 def sanitize_channels(item):
     """读回方案里的接收通道；老方案（单份数据流设置）自动迁移成一条兜底通道。"""
     raw = item.get("channels")
@@ -174,6 +191,7 @@ def sanitize_channels(item):
                 mapping=sanitize_mapping(entry.get("mapping")),
                 outbound=sanitize_outbound(entry.get("outbound")),
                 sample=entry.get("sample"),
+                pair=sanitize_pair(entry.get("pair")),
             ))
         if channels:
             return channels[:MAX_CHANNELS]

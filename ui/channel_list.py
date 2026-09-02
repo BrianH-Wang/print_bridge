@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import (
 )
 
 from channels import ANY_PATH, MAX_CHANNELS, TWOWAY, describe_channel, make_channel
+from pairing import ATTACH, PRIMARY, describe_pair, pair_of, role_of
 from logger import print_log
 from ui.constants import CHANNEL_COLUMNS, CHANNEL_TABLE_HEIGHT
 from ui.dialogs.channel import ChannelDialog
@@ -99,6 +100,7 @@ class ChannelListWidget(QWidget):
                 "* （兜底）" if channel["path"] == ANY_PATH else channel["path"],
                 "双向" if twoway else "单向",
                 f"{channel['timeout']:g}s" if twoway else "-",
+                describe_pair(channel) if channel.get("pair") else "-",
                 "自定义" if channel.get("envelope") else "默认",
             ]
             for column, text in enumerate(cells):
@@ -199,7 +201,46 @@ class ChannelListWidget(QWidget):
                 self, "错误", "还没有配置接收通道，请先在「获取数据配置」里添加一条"
             )
             return None
+
+        problem = self._pair_problem()
+        if problem:
+            QMessageBox.warning(self, "错误", problem)
+            return None
         return [dict(c) for c in self.channels]
+
+    def _pair_problem(self):
+        """配对组的角色搭配得成对，缺一半的组只会白等或白存。"""
+        groups = {}
+        for channel in self.channels:
+            if not channel.get("pair"):
+                continue
+            pair = pair_of(channel)
+            groups.setdefault(pair["group"], []).append(channel)
+
+        for group, members in groups.items():
+            primaries = [c for c in members if role_of(c) == PRIMARY]
+            attaches = [c for c in members if role_of(c) == ATTACH]
+            if not attaches:
+                return (f"配对组「{group}」只有主报文没有附加数据，"
+                        f"{primaries[0]['key']} 会白等一场。\n\n"
+                        "把另一条链接设成「附加数据」，或者把这条改回「不参与配对」。")
+            if not primaries:
+                return (f"配对组「{group}」只有附加数据没有主报文，"
+                        f"{attaches[0]['key']} 收到的数据永远没人来取，也不会推给前端。\n\n"
+                        "把另一条链接设成「主报文」，或者把这条改回「不参与配对」。")
+            if len(primaries) > 1:
+                names = "、".join(c["key"] for c in primaries)
+                return (f"配对组「{group}」有多条主报文（{names}）。\n\n"
+                        "一份附加数据只会被最先来取的那条拿走，另一条会等空。"
+                        "请拆成不同的配对组。")
+
+            field = pair_of(primaries[0])["field"]
+            odd = [c for c in attaches if pair_of(c)["field"] != field]
+            if odd:
+                return (f"配对组「{group}」里配对字段不一致：主报文用 {field}，"
+                        f"而 {odd[0]['key']} 用 {pair_of(odd[0])['field']}。\n\n"
+                        "配对字段取的是「字段映射」转译之后的名字，两边要改成同一个。")
+        return None
 
     @staticmethod
     def default_channels():

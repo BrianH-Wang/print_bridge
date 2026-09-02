@@ -58,15 +58,16 @@ async def run(args):
                        for k, v in body.items()} if isinstance(body, dict) else body
             print(f"📥 type={msg_type} id={msg_id} {json.dumps(preview, ensure_ascii=False)}")
 
-            # 有没有图片字段——用来验证「配对合流」到底有没有生效
-            if isinstance(body, dict):
-                for key in ("file", "image", "imageBase64", "img"):
-                    if body.get(key):
-                        print(f"   🖼 带图片字段 {key}（{len(body[key])} 字符）")
+            # 有没有图片字段——用来验证「配对合流」到底有没有生效。
+            # 字段名可能被转译改过，所以按常见名字都试一遍。
+            if isinstance(body, dict) and msg_type != "connection":
+                for key in ("file", "image", "imageBase64", "img", "pdfBase64"):
+                    value = body.get(key)
+                    if isinstance(value, str) and value:
+                        print(f"   🖼 带图片字段 {key}（{len(value)} 字符）")
                         break
                 else:
-                    if body.get("code"):
-                        print("   ⚠️ 没有图片字段——两条流没有合并")
+                    print("   ⚠️ 没有图片字段")
 
             if not msg_id:
                 continue

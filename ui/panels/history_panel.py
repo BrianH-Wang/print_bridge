@@ -23,6 +23,7 @@ from data_receiver import (
 from history_store import HistoryStore, default_dir
 from logger import print_log, shorten
 from mapping import build_outbound
+from pairing import expire_pairs
 from ui.constants import (
     DEFAULT_DATA_COLUMNS, FIELD_LABELS, HISTORY_FIXED_COLUMNS, HISTORY_POLL_MS,
     MAX_HISTORY, MIN_VISIBLE_ROWS, ROW_HEIGHT, THUMB_SIZE,
@@ -365,6 +366,9 @@ class HistoryPanel(QWidget):
     def _expire_pending_acks(self):
         """定时把超时未收齐的 ack 定格到当前进度。"""
         from data_receiver import expire_pending_acks
+        # 顺手清一遍配对暂存区：只发图不发数值时那些图会一直挂着，
+        # 光靠下次访问时清理的话，没流量就永远不清，内存下不去
+        expire_pairs()
         for msg_id, acked, total in expire_pending_acks():
             for r in self.records:
                 if r.get("msg_id") == msg_id and not r.get("ack_done"):

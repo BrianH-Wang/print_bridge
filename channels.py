@@ -47,6 +47,7 @@ RESPONSE_DEFAULTS = {
     "reply_timeout": {"code": 504, "message": "等待前端回复超时（{timeout}s）"},
     "no_route":      {"code": 404, "message": "没有匹配该路径的通道：{path}"},
     "map_failed":    {"code": 400, "message": "字段转译失败：{error}"},
+    "pair_timeout":  {"code": 504, "message": "等不到配对数据（{missing}），超时 {timeout}s"},
 }
 
 # (场景 key, 场景名, 什么时候会返回, 可用占位符)，界面上照这个顺序列出来
@@ -60,6 +61,7 @@ RESPONSE_LABELS = [
     ("reply_timeout", "等待回复超时",       "双向模式下前端在超时时间内没回 external_reply", "{timeout}"),
     ("no_route",      "路径没有对应通道",   "POST 的路径没有匹配的通道，也没有兜底通道", "{path}"),
     ("map_failed",    "字段转译失败",       "必填字段缺失或转换算子出错，数据没有转发给前端", "{error}"),
+    ("pair_timeout",  "配对超时",           "主报文在等待时间内没等到附加数据，且设了「回错误」", "{missing} {timeout}"),
 ]
 
 
@@ -93,7 +95,7 @@ def normalize_path(path):
 def make_channel(key=DEFAULT_CHANNEL_KEY, label="", path=ANY_PATH, flow=ONEWAY,
                  timeout=DEFAULT_REPLY_TIMEOUT, dispatch=CONCURRENT,
                  envelope=None, http_status=FOLLOW_CODE, responses=None,
-                 mapping=None, outbound=None, sample=None):
+                 mapping=None, outbound=None, sample=None, pair=None):
     """一条接收通道的完整描述。
 
     key       英文标识，日志和历史里用它区分是哪条链接来的
@@ -104,6 +106,7 @@ def make_channel(key=DEFAULT_CHANNEL_KEY, label="", path=ANY_PATH, flow=ONEWAY,
     mapping   发给前端前的字段转译；None = 原样透传
     outbound  发给前端的报文形状；None = 标准形状
     sample    设备发来的一条样例，只用于界面上的实时预览，不参与运行时
+    pair      在配对合流里的角色；None = 不参与（见 pairing.py）
 
     mapping / outbound 这里只原样收着不做规整：规整逻辑在 mapping.py，
     而 mapping.py 要 import 本模块的 render_template，反过来 import 会成环。
@@ -123,6 +126,7 @@ def make_channel(key=DEFAULT_CHANNEL_KEY, label="", path=ANY_PATH, flow=ONEWAY,
         "mapping": mapping if isinstance(mapping, dict) and mapping else None,
         "outbound": outbound if isinstance(outbound, dict) and outbound else None,
         "sample": sample if isinstance(sample, dict) and sample else None,
+        "pair": pair if isinstance(pair, dict) and pair else None,
     }
 
 

@@ -13,6 +13,7 @@ import argparse
 import base64
 import json
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -106,6 +107,10 @@ def main():
     p.add_argument("--order", choices=["image-first", "data-first"], default="image-first",
                    help="两条请求的先后顺序")
     p.add_argument("--gap", type=float, default=0.3, help="两条请求之间隔几秒")
+    p.add_argument("--parallel", action="store_true",
+                   help="两条请求各走各的连接（真实设备通常如此）。\n"
+                        "配对模式下 data-first 必须用它：/callback 会阻塞等图片，"
+                        "顺序发的话永远轮不到发图那一步")
     p.add_argument("--no-image", action="store_true", help="只推数据，不传图")
     p.add_argument("--timeout", type=float, default=30, help="等待响应的秒数")
     args = p.parse_args()
@@ -126,16 +131,40 @@ def main():
     if args.order == "data-first":
         steps.reverse()
 
-    print(f"🎯 目标 {args.base}   条码 {args.code}   顺序 {args.order}")
+    how = "并发" if args.parallel else "顺序"
+    print(f"🎯 目标 {args.base}   条码 {args.code}   顺序 {args.order}（{how}）")
 
     all_problems, results = [], []
-    for i, (title, path, payload, expect_data) in enumerate(steps):
-        if i:
-            time.sleep(args.gap)
-        status, raw, seconds = post(args.base, path, payload, args.timeout)
-        problems, body = show(title, path, status, raw, seconds, expect_data)
-        all_problems += [f"{path}: {x}" for x in problems]
-        results.append((path, body))
+    if args.parallel and len(steps) > 1:
+        # 每条各起一个线程：第二条不必等第一条回来。配对模式下 /callback
+        # 会阻塞着等图片，顺序发的话那张图永远发不出去。
+        answers = [None] * len(steps)
+
+        def fire(index, delay):
+            time.sleep(delay)
+            title, path, payload, _ = steps[index]
+            answers[index] = post(args.base, path, payload, args.timeout)
+
+        threads = [threading.Thread(target=fire, args=(i, i * args.gap))
+                   for i in range(len(steps))]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        for i, (title, path, payload, expect_data) in enumerate(steps):
+            status, raw, seconds = answers[i]
+            problems, body = show(title, path, status, raw, seconds, expect_data)
+            all_problems += [f"{path}: {x}" for x in problems]
+            results.append((path, body))
+    else:
+        for i, (title, path, payload, expect_data) in enumerate(steps):
+            if i:
+                time.sleep(args.gap)
+            status, raw, seconds = post(args.base, path, payload, args.timeout)
+            problems, body = show(title, path, status, raw, seconds, expect_data)
+            all_problems += [f"{path}: {x}" for x in problems]
+            results.append((path, body))
 
     print("\n" + "=" * 60)
     for path, body in results:

@@ -6,6 +6,11 @@
 from PyQt6.QtCore import QSize
 
 from channels import FIXED_200, FOLLOW_CODE
+from pairing import ATTACH as PAIR_ATTACH
+from pairing import ERROR as PAIR_ERROR
+from pairing import NONE as PAIR_NONE
+from pairing import PRIMARY as PAIR_PRIMARY
+from pairing import SEND_PARTIAL as PAIR_SEND_PARTIAL
 from data_receiver import CONCURRENT, ONEWAY, SERIAL, TWOWAY
 from printer_utils import NETWORK_PRINTER, SYSTEM_PRINTER
 
@@ -28,7 +33,16 @@ HTTP_STATUS_CHOICES = [
 PRINTER_COLUMNS = ["Key", "备注", "方式", "目标", "默认"]
 PRINTER_TABLE_HEIGHT = 142   # 表头 + 3 行完整可见，够放小票/后厨/杯贴这类典型配置
 MAX_PRINTERS = 10
-CHANNEL_COLUMNS = ["Key", "备注", "路径", "方向", "超时", "应答外壳"]
+PAIR_ROLE_CHOICES = [
+    ("不参与配对", PAIR_NONE),
+    ("主报文（等附加数据齐了再发）", PAIR_PRIMARY),
+    ("附加数据（存着等主报文来取）", PAIR_ATTACH),
+]
+PAIR_MISSING_CHOICES = [
+    ("照发，缺的字段就没有", PAIR_SEND_PARTIAL),
+    ("回错误给设备，不发", PAIR_ERROR),
+]
+CHANNEL_COLUMNS = ["Key", "备注", "路径", "方向", "超时", "配对", "应答外壳"]
 CHANNEL_TABLE_HEIGHT = 142   # 和打印机表一样高：表头 + 3 行，够放数值/图片/兜底
 MIN_REPLY_TIMEOUT = 0.1
 MAX_REPLY_TIMEOUT = 600.0

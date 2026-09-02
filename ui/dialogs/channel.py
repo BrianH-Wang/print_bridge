@@ -11,16 +11,21 @@ from PyQt6.QtWidgets import (
 )
 
 from channels import (
-    ANY_PATH, ENVELOPE_PRESETS, ENVELOPE_VARIABLES, KEY_PATTERN, TWOWAY,
+    ANY_PATH, ENVELOPE_PRESETS, ENVELOPE_VARIABLES, KEY_PATTERN, ONEWAY, TWOWAY,
     build_body, make_channel, normalize_path, validate_envelope,
 )
+from pairing import ATTACH as PAIR_ATTACH
+from pairing import DEFAULT_GROUP as PAIR_DEFAULT_GROUP
+from pairing import NONE as PAIR_NONE
+from pairing import PRIMARY as PAIR_PRIMARY
+from pairing import make_pair
 from mapping import (
     CUSTOM, DEFAULT_MESSAGE_TYPE, OUTBOUND_VARIABLES, STANDARD, build_outbound,
     make_outbound, validate_outbound,
 )
 from ui.constants import (
     DISPATCH_CHOICES, FLOW_CHOICES, HTTP_STATUS_CHOICES, MAX_REPLY_TIMEOUT,
-    MIN_REPLY_TIMEOUT,
+    MIN_REPLY_TIMEOUT, PAIR_MISSING_CHOICES, PAIR_ROLE_CHOICES,
 )
 from ui.dialogs.field_mapping import FieldMappingPage
 from ui.helpers import sanitize_mapping, sanitize_outbound
@@ -55,6 +60,7 @@ class ChannelDialog(QDialog):
         )
         self.mapping_page.changed.connect(self._refresh_outbound_preview)
         tabs.addTab(self.mapping_page, "字段映射")
+        tabs.addTab(self._pair_page(current), "配对")
         # 两页高级设置按「去向」分，各自短一屏；⚙ 是给人的信号：这里要懂 JSON
         tabs.addTab(self._outbound_page(current), "发给前端 ⚙")
         tabs.addTab(self._advanced_page(current), "回给设备 ⚙")
@@ -71,6 +77,7 @@ class ChannelDialog(QDialog):
         buttons.rejected.connect(self.reject)
         box.addWidget(buttons)
 
+        self._on_pair_role_changed()
         self._on_flow_changed()
         self._on_envelope_toggled()
         self._on_outbound_changed()
@@ -143,6 +150,173 @@ class ChannelDialog(QDialog):
         twoway = self.flow_combo.currentData() == TWOWAY
         self.timeout_input.setEnabled(twoway)
         self.timeout_hint.setText("秒" if twoway else "秒　·　单向不会等，这项不生效")
+
+    # ------------------------------------------------------------------ #
+    # 配对合流
+    # ------------------------------------------------------------------ #
+
+    def _pair_page(self, current):
+        pair = current.get("pair") or make_pair()
+        page = QWidget()
+        box = QVBoxLayout(page)
+        box.setSpacing(10)
+
+        tip = QLabel(
+            "两条链接的数据靠一个业务号合成一条再发给前端。"
+            "比如分拣设备的图片走 /upload、数值走 /callback，同一个条码算一件。"
+            "不用配对就保持「不参与」。"
+        )
+        tip.setObjectName("hint")
+        tip.setWordWrap(True)
+        box.addWidget(tip)
+
+        form = QFormLayout()
+        self.pair_role_combo = QComboBox()
+        for text, value in PAIR_ROLE_CHOICES:
+            self.pair_role_combo.addItem(text, value)
+        self.pair_role_combo.setCurrentIndex(
+            max(self.pair_role_combo.findData(pair.get("role")), 0)
+        )
+        self.pair_role_combo.currentIndexChanged.connect(self._on_pair_role_changed)
+        form.addRow("角色:", self.pair_role_combo)
+
+        self.pair_group_input = QLineEdit(pair.get("group", PAIR_DEFAULT_GROUP))
+        self.pair_group_input.setPlaceholderText(PAIR_DEFAULT_GROUP)
+        self.pair_group_input.setToolTip("同组的通道之间才互相配对；只有一组时随便填个名字")
+        form.addRow("配对组:", self.pair_group_input)
+
+        self.pair_field_input = QLineEdit(pair.get("field", ""))
+        self.pair_field_input.setPlaceholderText("expressNo")
+        self.pair_field_input.setToolTip(
+            "配对键的字段名，取的是**「字段映射」页转译之后**的名字。\n"
+            "两条通道源字段名不一样时（一边 code、一边 orderNo），\n"
+            "各自先在映射里改成一致，这里填同一个就行。"
+        )
+        form.addRow("配对字段:", self.pair_field_input)
+        box.addLayout(form)
+
+        # ---- 主报文那一侧 ---- #
+        self.primary_box = QWidget()
+        primary_form = QFormLayout(self.primary_box)
+        primary_form.setContentsMargins(0, 0, 0, 0)
+
+        wait_row = QWidget()
+        wait_layout = QHBoxLayout(wait_row)
+        wait_layout.setContentsMargins(0, 0, 0, 0)
+        wait_layout.setSpacing(6)
+        self.pair_wait_input = QLineEdit(f"{float(pair.get('wait', 5)):g}")
+        self.pair_wait_input.setFixedWidth(72)
+        wait_hint = QLabel("秒　·　和「等前端回复」共用同一份超时预算")
+        wait_hint.setObjectName("hint")
+        wait_layout.addWidget(self.pair_wait_input)
+        wait_layout.addWidget(wait_hint)
+        wait_layout.addStretch()
+        primary_form.addRow("最多等附加数据:", wait_row)
+
+        self.pair_missing_combo = QComboBox()
+        for text, value in PAIR_MISSING_CHOICES:
+            self.pair_missing_combo.addItem(text, value)
+        self.pair_missing_combo.setCurrentIndex(
+            max(self.pair_missing_combo.findData(pair.get("on_missing")), 0)
+        )
+        primary_form.addRow("等不到时:", self.pair_missing_combo)
+        box.addWidget(self.primary_box)
+
+        # ---- 附加数据那一侧 ---- #
+        self.attach_box = QWidget()
+        attach_form = QFormLayout(self.attach_box)
+        attach_form.setContentsMargins(0, 0, 0, 0)
+
+        self.pair_value_input = QLineEdit(pair.get("value", ""))
+        self.pair_value_input.setPlaceholderText("留空 = 除配对键外的字段全并进去")
+        attach_form.addRow("并入哪个字段:", self.pair_value_input)
+
+        self.pair_rename_input = QLineEdit(pair.get("rename", ""))
+        self.pair_rename_input.setPlaceholderText("留空 = 保持原名")
+        attach_form.addRow("并进去叫什么:", self.pair_rename_input)
+
+        keep_row = QWidget()
+        keep_layout = QHBoxLayout(keep_row)
+        keep_layout.setContentsMargins(0, 0, 0, 0)
+        keep_layout.setSpacing(6)
+        self.pair_keep_input = QLineEdit(f"{float(pair.get('keep', 60)):g}")
+        self.pair_keep_input.setFixedWidth(72)
+        keep_hint = QLabel("秒　·　到点没人来取就清掉，图片不常驻内存")
+        keep_hint.setObjectName("hint")
+        keep_layout.addWidget(self.pair_keep_input)
+        keep_layout.addWidget(keep_hint)
+        keep_layout.addStretch()
+        attach_form.addRow("暂存多久:", keep_row)
+        box.addWidget(self.attach_box)
+
+        self.pair_hint = QLabel()
+        self.pair_hint.setObjectName("hint")
+        self.pair_hint.setWordWrap(True)
+        box.addWidget(self.pair_hint)
+        box.addStretch()
+        return page
+
+    def _on_pair_role_changed(self):
+        role = self.pair_role_combo.currentData()
+        active = role != PAIR_NONE
+        for widget in (self.pair_group_input, self.pair_field_input):
+            widget.setEnabled(active)
+        self.primary_box.setVisible(role == PAIR_PRIMARY)
+        self.attach_box.setVisible(role == PAIR_ATTACH)
+
+        if role == PAIR_ATTACH:
+            # 附加通道天生是单向的：收下存起来立刻回，等主报文来取。
+            # 允许选双向只会让人以为它会等前端，实际不会。
+            self.flow_combo.setCurrentIndex(max(self.flow_combo.findData(ONEWAY), 0))
+            self.flow_combo.setEnabled(False)
+            self.flow_combo.setToolTip("附加数据通道收下就回，不等前端——所以固定单向")
+            self.pair_hint.setText(
+                "这条通道收到数据后不会推给前端，而是存进暂存区等主报文来取。"
+            )
+        else:
+            self.flow_combo.setEnabled(True)
+            self.flow_combo.setToolTip("")
+            self.pair_hint.setText(
+                "这条通道会先等同组的附加数据齐了，再把合并后的结果发给前端。"
+                if role == PAIR_PRIMARY else ""
+            )
+        self._on_flow_changed()
+
+    def _pair_values(self):
+        """返回 (配对设置, 问题清单)。"""
+        role = self.pair_role_combo.currentData()
+        if role == PAIR_NONE:
+            return None, []
+
+        problems = []
+        field = self.pair_field_input.text().strip()
+        if not field:
+            problems.append("配对字段不能为空，否则两条数据没法配对")
+
+        def number(text, name, low, high, fallback):
+            try:
+                value = float(text)
+            except ValueError:
+                problems.append(f"{name}要填数字（秒）")
+                return fallback
+            if not low <= value <= high:
+                problems.append(f"{name}要在 {low:g}-{high:g} 秒之间")
+                return fallback
+            return value
+
+        wait = number(self.pair_wait_input.text().strip(), "等待时间", 0, 600, 5.0)
+        keep = number(self.pair_keep_input.text().strip(), "暂存时间", 1, 3600, 60.0)
+
+        return make_pair(
+            role=role,
+            group=self.pair_group_input.text().strip(),
+            field=field,
+            value=self.pair_value_input.text().strip(),
+            rename=self.pair_rename_input.text().strip(),
+            wait=wait,
+            keep=keep,
+            on_missing=self.pair_missing_combo.currentData(),
+        ), problems
 
     # ------------------------------------------------------------------ #
     # 发给前端的报文
@@ -449,6 +623,11 @@ class ChannelDialog(QDialog):
             QMessageBox.warning(self, "错误", "发给前端的报文有问题：\n\n" + "\n".join(problems))
             return
 
+        _, problems = self._pair_values()
+        if problems:
+            QMessageBox.warning(self, "错误", "配对设置有问题：\n\n" + "\n".join(problems))
+            return
+
         problems = self.mapping_page.problems()
         if problems:
             # 映射问题只按样例算出来，样例本身可能不全 —— 提醒但不拦，
@@ -468,6 +647,7 @@ class ChannelDialog(QDialog):
     def values(self):
         template, _ = self._parse_envelope()
         outbound, _ = self._parse_outbound()
+        pair, _ = self._pair_values()
         mapping = self.mapping_page.values()
         sample = self.mapping_page.sample()
 
@@ -486,4 +666,5 @@ class ChannelDialog(QDialog):
             # 样例跟着通道存：下次打开对话框预览立刻能用，
             # 不用再去翻设备文档重新粘一遍
             sample=sample,
+            pair=pair,
         )

@@ -28,6 +28,7 @@ ui/
 
 - `channels.py` —— 一条链接**怎么收**：路由、回给设备的应答外壳
 - `mapping.py` —— 收到之后**怎么翻译、发给前端什么形状**：路径取值、转换算子、字段映射、出向报文
+- `pairing.py` —— 两条链接**怎么合成一条**：暂存区、等待与收集、合并规则、过期与上限
 
 界面只负责填表，两边的校验函数（`validate_envelope` / `validate_outbound` / `map_fields`）
 同时供对话框做实时预览和运行时使用，不会出现"预览通过但运行时报错"。
@@ -152,7 +153,7 @@ A–E 五张卡都是 `QGroupBox`，标题文字里的 emoji 前有两个空格�
 | E0 | 卡片本体 | 获取数据配置  🌐 | `self.data_group` | 勾 B2 才显示 |
 | E1 | 监听地址输入框 | 监听地址: | `self.addr_input` | 只决定 host:port；路径部分仅作示例，收不收由 E3 的通道表说了算 |
 | E2 | HTTP 响应按钮 | HTTP 响应… | `self.http_resp_btn` | 打开 P5；运行中也能点，改完立即生效 |
-| E3 | 通道表格 | Key / 备注 / 路径 / 方向 / 超时 / 应答外壳 | `channel_list.table` | 只读，双击一行 = 编辑；渲染在 `render()`，列名 `CHANNEL_COLUMNS` |
+| E3 | 通道表格 | Key / 备注 / 路径 / 方向 / 超时 / 配对 / 应答外壳 | `channel_list.table` | 只读，双击一行 = 编辑；渲染在 `render()`，列名 `CHANNEL_COLUMNS` |
 | E4 | 添加按钮 | 添加 | `channel_list.buttons["添加"]` | `add()` → 打开 P7，上限 `MAX_CHANNELS` |
 | E5 | 编辑按钮 | 编辑 | `channel_list.buttons["编辑"]` | `edit()` |
 | E6 | 删除按钮 | 删除 | `channel_list.buttons["删除"]` | `remove()`，弹窗确认 |
@@ -229,8 +230,14 @@ P7 的四页按**数据流经的顺序**排，不是按难度排——照着从�
 | --- | --- | --- | --- |
 | 基础 | key、备注、路径、单双向、超时、并发 | 低 | `_basic_page()` |
 | 字段映射 | 模式 + 字段表（来源\|目标\|转换\|必填\|默认值）+ 样例 + 实时预览 | 中，会看 JSON 就行 | `FieldMappingPage`（`field_mapping.py`） |
+| 配对 | 角色（不参与/主报文/附加数据）、配对组、配对字段，两侧各自的参数 | 中 | `_pair_page()` |
 | 发给前端 ⚙ | 消息 type、固定附加字段、整条报文自定义模板 | 高 | `_outbound_page()` |
 | 回给设备 ⚙ | HTTP 状态码策略、应答外壳模板 | 高 | `_advanced_page()` |
+
+配对页选「附加数据」时，基础页的**数据流会被锁成单向并置灰**——
+附加通道收下就回、不等前端，让人以为能选双向只会误导（`_on_pair_role_changed()`）。
+跨通道的搭配校验在 `ChannelListWidget._pair_problem()`，启动前跑，
+只有主报文没附加、只有附加没主报文、一组多条主报文、两边配对字段不一致都会拦下。
 
 - 标题里的 ⚙ 是给人的信号：**这两页要懂 JSON**，前两页不用。
 - 铁律：**所有项的默认值 = 当前行为**，全默认时和不配置完全一样。
