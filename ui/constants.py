@@ -5,6 +5,7 @@
 
 from PyQt6.QtCore import QSize
 
+from channels import FIXED_200, FOLLOW_CODE
 from data_receiver import CONCURRENT, ONEWAY, SERIAL, TWOWAY
 from printer_utils import NETWORK_PRINTER, SYSTEM_PRINTER
 
@@ -20,9 +21,15 @@ PRINT_TARGET_CHOICES = [
     ("系统打印机（USB / 蓝牙 / WiFi / 网口队列）", SYSTEM_PRINTER),
     ("网络直连（IP:9100 原样发送）", NETWORK_PRINTER),
 ]
+HTTP_STATUS_CHOICES = [
+    ("跟随业务 code", FOLLOW_CODE),
+    ("固定 200（业务码只放 body）", FIXED_200),
+]
 PRINTER_COLUMNS = ["Key", "备注", "方式", "目标", "默认"]
 PRINTER_TABLE_HEIGHT = 142   # 表头 + 3 行完整可见，够放小票/后厨/杯贴这类典型配置
 MAX_PRINTERS = 10
+CHANNEL_COLUMNS = ["Key", "备注", "路径", "方向", "超时", "应答外壳"]
+CHANNEL_TABLE_HEIGHT = 142   # 和打印机表一样高：表头 + 3 行，够放数值/图片/兜底
 MIN_REPLY_TIMEOUT = 0.1
 MAX_REPLY_TIMEOUT = 600.0
 LOG_POLL_MS = 300

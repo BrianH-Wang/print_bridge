@@ -10,17 +10,21 @@
 ui/
   main_window.py      主窗口：拼装各配置卡与页签（H / A / B / C / D外壳 / E / F / G / T）
   constants.py        尺寸、上限、下拉选项、表格列名
-  helpers.py          纯函数：human_bytes / normalize_addr / clamp_* / sanitize_printers
+  helpers.py          纯函数：human_bytes / normalize_addr / clamp_* / sanitize_printers / sanitize_channels
   printer_list.py     D 区打印机列表组件（表格 + 增删改 + 设为默认）
+  channel_list.py     E 区接收通道列表组件（表格 + 增删改）
   profiles.py         A 区配置方案（mixin：要读写各张卡片上的控件）
   server_control.py   F 启停服务与各项校验（mixin）
   panels/
     log_panel.py      L 日志页签（自带队列与定时器）
     history_panel.py  Y 接收历史页签（记录、筛选、重发、ack 都归它）
   dialogs/
-    image_preview.py  printer.py  http_response.py
+    image_preview.py  printer.py  http_response.py  channel.py
     advanced_search.py  history_search.py          ← 弹窗一个模块一个
 ```
+
+界面之外，`channels.py` 是接收通道的模型层（路由 + 应答外壳，纯函数、不依赖 Qt）。
+「一条链接怎么收、回什么形状」的逻辑都在那里，界面只负责填表。
 
 ---
 
@@ -49,9 +53,10 @@ ui/
 │                                                D4删除  D5设为默认     │
 │     D6 提示行：前端发 {"type":"print","printer":"receipt"} 指定打给谁  │
 ├──────────────────────────────────────────────────────────────────────┤
-│  E  获取数据配置  🌐  E1 数据获取地址[输入框]          ← 勾 B2 才显示  │
-│     E2 数据流[单向|双向] E3 超时(秒)[10] E4 [并发|单发]    E5 HTTP响应…│
-│     E6 提示行：POST 到 http://… · 等前端回复超时 8s · 单发排队         │
+│  E  获取数据配置  🌐  E1 监听地址[输入框]  E2 HTTP响应…← 勾 B2 才显示 │
+│     E3 通道表格 Key|备注|路径|方向|超时|应答外壳  E4添加  E5编辑       │
+│                                                  E6删除               │
+│     E7 提示行：设备 POST 到 http://127.0.0.1:13213/… · 3 条通道按路径分流│
 └──────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -139,17 +144,22 @@ A–E 五张卡都是 `QGroupBox`，标题文字里的 emoji 前有两个空格�
 | 编号 | 名称 | 界面文字 | 控件 | 备注 |
 | --- | --- | --- | --- | --- |
 | E0 | 卡片本体 | 获取数据配置  🌐 | `self.data_group` | 勾 B2 才显示 |
-| E1 | 地址输入框 | 数据获取地址: | `self.addr_input` | 规整用 `helpers.normalize_addr()`，校验 `_validate_addr()` |
-| E2 | 数据流下拉 | 单向（只转发）/ 双向（等前端回复） | `self.flow_combo` | 选项 `FLOW_CHOICES`，切换走 `_on_flow_changed()` |
-| E3 | 超时输入框 | 超时(秒): | `self.timeout_input` / `self.timeout_label` | 校验 `_validate_timeout()`；单向+并发时置灰 |
-| E4 | 分发下拉 | 并发 / 单发 | `self.dispatch_combo` | 选项 `DISPATCH_CHOICES` |
-| E5 | HTTP 响应按钮 | HTTP 响应… | `self.http_resp_btn` | 打开 P5；运行中也能点，改完立即生效 |
-| E6 | 提示行 | POST JSON 到 http://… · 双向，超时 10s · 并发 | `self.data_hint` | `_update_data_hint()`，地址不合法显示 ⚠️；完整语义在 tooltip 里 |
+| E1 | 监听地址输入框 | 监听地址: | `self.addr_input` | 只决定 host:port；路径部分仅作示例，收不收由 E3 的通道表说了算 |
+| E2 | HTTP 响应按钮 | HTTP 响应… | `self.http_resp_btn` | 打开 P5；运行中也能点，改完立即生效 |
+| E3 | 通道表格 | Key / 备注 / 路径 / 方向 / 超时 / 应答外壳 | `channel_list.table` | 只读，双击一行 = 编辑；渲染在 `render()`，列名 `CHANNEL_COLUMNS` |
+| E4 | 添加按钮 | 添加 | `channel_list.buttons["添加"]` | `add()` → 打开 P7，上限 `MAX_CHANNELS` |
+| E5 | 编辑按钮 | 编辑 | `channel_list.buttons["编辑"]` | `edit()` |
+| E6 | 删除按钮 | 删除 | `channel_list.buttons["删除"]` | `remove()`，弹窗确认 |
+| E7 | 提示行 | 设备 POST 到 http://… · N 条通道按路径分流 | `self.data_hint` | `_update_data_hint()`；地址不合法显示 ⚠️。没有兜底通道时 `channel_list.hint` 会警告其余路径一律 404 |
 
-E2–E4 三项排在一行里各按内容取宽度（`flow_row` 的 QHBoxLayout），
-E5 被 stretch 推到最右——放进 grid 会让第一个下拉把整行吃掉。
-这三项和地址一样属于「配置方案」，启动服务时通过 `configure_flow()` 下发给 `data_receiver`。
-E5 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `http_responses`，由 `configure_responses()` 下发。
+单向/双向、超时、并发**不再是卡片上的全局设置**，下沉到每条通道自己身上了：
+图片接口要立刻回、数值接口要等前端回复，一份全局设置盖不住这种组合。
+通道列表属于「配置方案」，启动服务时由 `configure_channels()` 下发给 `data_receiver`；
+路由和应答外壳的实现都在 `channels.py`。
+
+E2 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `http_responses`，由 `configure_responses()` 下发。
+通道可以按场景覆盖其中几条（`channel["responses"]`），三层叠加顺序是
+**通道覆盖 > 全局表 > 出厂默认**，见 `data_receiver.response_for()`。
 
 ## F / G 启动按钮与状态条 — `main_window._build_action_bar()` + `ui/server_control.py`
 
@@ -203,8 +213,13 @@ E5 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `h
 | P2 | 历史筛选条件 | `AdvancedSearchDialog`（`advanced_search.py`） | 历史筛选 |
 | P3 | 历史搜索 | `HistorySearchDialog`（`history_search.py`） | Y7 |
 | P4 | 确认与错误提示 | `QMessageBox` | 切换方案有未保存修改、删除、校验失败等 |
-| P5 | HTTP 响应配置 | `HttpResponseDialog`（`http_response.py`） | E5，7 个场景各自的状态码与说明，带「全部恢复默认」；行高 `ROW_HEIGHT`、列宽 `WHEN_COLUMN_WIDTH`/`CODE_COLUMN_WIDTH`、单元格留白 `CELL_MARGIN`；状态码按 2xx/4xx/5xx 上色（`_paint_code()`）；状态码框不显示微调箭头，高度与其它输入框统一为 `INPUT_HEIGHT` |
+| P5 | HTTP 响应配置 | `HttpResponseDialog`（`http_response.py`） | E2，8 个场景各自的状态码与说明，带「全部恢复默认」；行高 `ROW_HEIGHT`、列宽 `WHEN_COLUMN_WIDTH`/`CODE_COLUMN_WIDTH`、单元格留白 `CELL_MARGIN`；状态码按 2xx/4xx/5xx 上色（`_paint_code()`）；状态码框不显示微调箭头，高度与其它输入框统一为 `INPUT_HEIGHT` |
 | P6 | 添加 / 编辑打印机 | `PrinterDialog`（`printer.py`） | D2 / D3，填 key、备注、方式、队列或 IP:端口，带「测试连接」 |
+| P7 | 添加 / 编辑通道 | `ChannelDialog`（`channel.py`） | E4 / E5，分「基础 / 高级」两页。基础页：key、备注、路径、单双向、超时、并发。高级页：HTTP 状态码策略、自定义应答外壳（模板 + 常用形状下拉 + 实时预览），详见 [高级配置.md](高级配置.md) |
+
+P7 高级页的铁律：**所有项的默认值 = 当前行为**，全默认时和不配置完全一样。
+模板改坏（非法 JSON、用了不存在的变量、漏了 `{{__code}}`）当场在预览下方标红且存不进去，
+校验在 `channels.validate_envelope()`。
 
 `HistorySearchDialog` 通过 `self.panel` 拿记录、图片和重发能力，parent 必须是 `HistoryPanel`。
 

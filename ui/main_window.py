@@ -2,6 +2,7 @@
 
 真正的功能都在旁边的模块里：
   ui/printer_list.py  打印机列表组件
+  ui/channel_list.py  接收通道列表组件
   ui/panels/          日志、接收历史两个页签
   ui/profiles.py      配置方案（mixin）
   ui/server_control.py 启停服务（mixin）
@@ -19,18 +20,14 @@ from PyQt6.QtWidgets import (
     QTabWidget, QVBoxLayout, QWidget,
 )
 
-from data_receiver import (
-    DEFAULT_REPLY_TIMEOUT, RESPONSE_DEFAULTS, RESPONSE_LABELS, configure_responses,
-)
+from data_receiver import RESPONSE_DEFAULTS, RESPONSE_LABELS, configure_responses
 from logger import print_log
 from printer_utils import DEFAULT_RAW_PORT, NETWORK_PRINTER, SYSTEM_PRINTER
 from theme import SYSTEM, THEME_CHOICES, apply_theme
-from ui.constants import (
-    DATA_ADDR, DISPATCH_CHOICES, FLOW_CHOICES, MAX_REPLY_TIMEOUT, MIN_REPLY_TIMEOUT,
-    SERIAL, TWOWAY,
-)
+from ui.channel_list import ChannelListWidget
+from ui.constants import DATA_ADDR
 from ui.dialogs import HttpResponseDialog
-from ui.helpers import clamp_timeout, normalize_addr
+from ui.helpers import normalize_addr
 from ui.panels import HistoryPanel, LogPanel
 from ui.printer_list import PrinterListWidget
 from ui.profiles import ProfileMixin
@@ -333,62 +330,29 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.addr_input.textChanged.connect(self._update_data_hint)
         self.addr_input.textChanged.connect(self._update_profile_hint)
 
-        grid.addWidget(QLabel("数据获取地址:"), 0, 0)
-        grid.addWidget(self.addr_input, 0, 1, 1, 4)
-        grid.setColumnStretch(1, 1)
-
-        # 数据流：单向只管转发；双向要等前端回一条，再拿它答复设备
-        self.flow_combo = QComboBox()
-        self.flow_combo.setMinimumHeight(28)   # 与 LineEdit 对齐，避免被 group title 压扁
-        for label, mode in FLOW_CHOICES:
-            self.flow_combo.addItem(label, mode)
-        self.flow_combo.setToolTip(
-            "单向：设备 → 本程序 → 前端，收下就回 200\n"
-            "双向：设备 → 本程序 → 前端 → 本程序 → 设备，用前端的回复答复设备"
-        )
-        self.flow_combo.currentIndexChanged.connect(self._on_flow_changed)
-
-        self.timeout_input = QLineEdit(str(DEFAULT_REPLY_TIMEOUT))
-        self.timeout_input.setFixedWidth(64)
-        self.timeout_input.setToolTip(
-            "双向模式下设备最多等多久（秒）；单发模式下排队和等回复共用这份预算"
-        )
-        self.timeout_input.textChanged.connect(self._update_data_hint)
-        self.timeout_input.textChanged.connect(self._update_profile_hint)
-        self.timeout_label = QLabel("超时(秒):")
-
-        self.dispatch_combo = QComboBox()
-        self.dispatch_combo.setMinimumHeight(28)
-        for label, mode in DISPATCH_CHOICES:
-            self.dispatch_combo.addItem(label, mode)
-        self.dispatch_combo.setToolTip(
-            "并发：多条请求同时处理，第 2 条不必等第 1 条回来\n"
-            "单发：排队串行，一条处理完才轮到下一条"
-        )
-        self.dispatch_combo.currentIndexChanged.connect(self._on_flow_changed)
-
         self.http_resp_btn = QPushButton("HTTP 响应…")
         self.http_resp_btn.setObjectName("secondary")
-        self.http_resp_btn.setToolTip("维护各种情况下返回给设备的 HTTP 码和说明")
+        self.http_resp_btn.setToolTip("维护各种情况下返回给设备的 HTTP 码和说明（全局，不进方案）")
         self.http_resp_btn.clicked.connect(self.open_http_responses)
 
-        # 这一行四个控件各按内容取宽度，剩下的空间留给右侧按钮前的空白，
-        # 不像放在 grid 里那样让第一个下拉把整行都吃掉
-        self.flow_combo.setFixedWidth(200)
-        self.dispatch_combo.setFixedWidth(96)
-        flow_row = QWidget()
-        flow_box = QHBoxLayout(flow_row)
-        flow_box.setContentsMargins(0, 0, 0, 0)
-        flow_box.setSpacing(12)
-        flow_box.addWidget(self.flow_combo)
-        flow_box.addWidget(self.timeout_label)
-        flow_box.addWidget(self.timeout_input)
-        flow_box.addWidget(self.dispatch_combo)
-        flow_box.addStretch()
-        flow_box.addWidget(self.http_resp_btn)
+        addr_row = QWidget()
+        addr_box = QHBoxLayout(addr_row)
+        addr_box.setContentsMargins(0, 0, 0, 0)
+        addr_box.setSpacing(12)
+        addr_box.addWidget(self.addr_input, 1)
+        addr_box.addWidget(self.http_resp_btn)
 
-        grid.addWidget(QLabel("数据流:"), 1, 0)
-        grid.addWidget(flow_row, 1, 1, 1, 4)
+        grid.addWidget(QLabel("监听地址:"), 0, 0)
+        grid.addWidget(addr_row, 0, 1, 1, 4)
+        grid.setColumnStretch(1, 1)
+
+        # 单向/双向、超时、并发都下沉到每条通道自己身上了：
+        # 图片接口要立刻回、数值接口要等前端回复，一份全局设置盖不住这种组合。
+        self.channel_list = ChannelListWidget(self.data_group)
+        self.channel_list.changed.connect(self._update_data_hint)
+        self.channel_list.changed.connect(self._update_profile_hint)
+        grid.addWidget(QLabel("接收通道:"), 1, 0, Qt.AlignmentFlag.AlignTop)
+        grid.addWidget(self.channel_list, 1, 1, 1, 4)
 
         self.data_hint = QLabel()
         self.data_hint.setObjectName("hint")
@@ -402,7 +366,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         hint_layout.addWidget(self.data_hint)
         grid.addWidget(hint_row, 2, 0, 1, 5)
 
-        self._on_flow_changed()
+        self._update_data_hint()
 
         self.data_group.setLayout(grid)
         return self.data_group
@@ -427,16 +391,16 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
             self.data_hint.setText("⚠️ 地址格式不正确，示例：localhost:13213/callback")
             return
 
-        twoway = self.flow_combo.currentData() == TWOWAY
-        parts = [f"POST JSON 到 http://{addr}"]
-        parts.append(
-            f"双向，等前端回复，超时 {self.timeout_input.text().strip()}s"
-            if twoway else "单向，收下即回 200"
+        # 只报监听地址和通道条数：每条通道各自的方向和超时都写在表格里了，
+        # 再在这行重复一遍就成了两处真相
+        host = addr.split("/")[0]
+        channels = getattr(self, "channel_list", None)
+        count = len(channels.channels) if channels else 0
+        self.data_hint.setText(
+            f"设备 POST 到 http://{host}/…　·　{count} 条通道按路径分流"
         )
-        parts.append("单发排队" if self.dispatch_combo.currentData() == SERIAL else "并发")
-        self.data_hint.setText("　·　".join(parts))
-        # 完整语义放 tooltip，提示行只留关键信息
         self.data_hint.setToolTip(
+            "地址里的路径部分只是给人看的示例，真正决定收不收、怎么收的是下面的通道表。\n"
             "双向：推给前端的消息带 expectReply，前端回 external_reply 后才答复设备；"
             "超时返回 504。单向：转发完立即回 200。"
         )
@@ -490,30 +454,6 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
             configure_responses(self.http_responses)
             print_log("↻ 已即时生效")
 
-    def _on_flow_changed(self):
-        """单向时不需要等回复；超时只在双向或单发排队时才起作用。"""
-        twoway = self.flow_combo.currentData() == TWOWAY
-        serial = self.dispatch_combo.currentData() == SERIAL
-        useful = twoway or serial
-        self.timeout_input.setEnabled(useful and not self.running)
-        self.timeout_label.setEnabled(useful)
-        self._update_data_hint()
-        self._update_profile_hint()
-
-    def _validate_timeout(self):
-        text = self.timeout_input.text().strip()
-        try:
-            timeout = float(text)
-        except ValueError:
-            QMessageBox.warning(self, "错误", "超时时间要填数字（秒）")
-            return None
-        if not MIN_REPLY_TIMEOUT <= timeout <= MAX_REPLY_TIMEOUT:
-            QMessageBox.warning(
-                self, "错误",
-                f"超时时间要在 {MIN_REPLY_TIMEOUT:g}-{MAX_REPLY_TIMEOUT:g} 秒之间",
-            )
-            return None
-        return timeout
 
     def _validate_addr(self):
         addr = normalize_addr(self.addr_input.text())

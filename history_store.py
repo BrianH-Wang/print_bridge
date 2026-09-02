@@ -103,8 +103,11 @@ class HistoryStore:
     # 读写
     # ------------------------------------------------------------------ #
 
-    def build_record(self, payload, forwarded, when=None, msg_id=None):
-        """图片写入磁盘，其余字段原样保留在元数据里。"""
+    def build_record(self, payload, forwarded, when=None, msg_id=None, channel=None):
+        """图片写入磁盘，其余字段原样保留在元数据里。
+
+        channel: 数据是从哪条接收通道进来的，多条链接时用它区分来源。
+        """
         when = when or datetime.now()
         fields = dict(payload) if isinstance(payload, dict) else {"data": payload}
 
@@ -128,6 +131,8 @@ class HistoryStore:
         }
         if msg_id:
             record["msg_id"] = msg_id
+        if channel:
+            record["channel"] = channel
         return record
 
     def append(self, record):

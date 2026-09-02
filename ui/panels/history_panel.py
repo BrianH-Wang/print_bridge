@@ -256,6 +256,7 @@ class HistoryPanel(QWidget):
         try:
             record = self.store.build_record(
                 entry["data"], entry["forwarded"], entry["time"], entry.get("msg_id"),
+                entry.get("channel"),
             )
         except OSError as e:
             print_log(f"❌ 写入历史失败: {e}")

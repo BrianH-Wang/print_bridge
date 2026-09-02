@@ -8,7 +8,9 @@ import threading
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QMessageBox
 
-from data_receiver import configure_flow, configure_responses, start_http_server, stop_http_server
+from data_receiver import (
+    configure_channels, configure_responses, start_http_server, stop_http_server,
+)
 from logger import print_log
 from printer_utils import describe_printer
 from websocket_server import start_websocket_server
@@ -21,11 +23,10 @@ class ServerMixin:
         for widget in (
             self.port_input,
             self.addr_input, self.profile_combo, *self.profile_buttons,
-            self.flow_combo, self.dispatch_combo, self.timeout_input,
         ):
             widget.setEnabled(enabled)
-        # 超时框、打印机那组控件还要看当前模式/选中行，由它们自己决定最终状态
-        self._on_flow_changed()
+        # 两张表的按钮还要看有没有选中行，由它们自己决定最终状态
+        self.channel_list.set_editable(enabled)
         self.printer_list.set_editable(enabled)
 
         # 复选框不用 setEnabled(False)：macOS 上禁用后的勾选标记几乎看不见，
@@ -68,8 +69,8 @@ class ServerMixin:
         addr = self._validate_addr() if enable_data else None
         if enable_data and addr is None:
             return
-        timeout = self._validate_timeout() if enable_data else None
-        if enable_data and timeout is None:
+        channels = self.channel_list.validate() if enable_data else []
+        if enable_data and channels is None:
             return
         printers = self.printer_list.validate() if enable_print else []
         if enable_print and printers is None:
@@ -94,11 +95,7 @@ class ServerMixin:
         if enable_data:
             self.addr_input.setText(addr)   # 回写规整后的写法，所见即所用
             configure_responses(self.http_responses)
-            configure_flow(
-                mode=self.flow_combo.currentData(),
-                timeout=timeout,
-                dispatch=self.dispatch_combo.currentData(),
-            )
+            configure_channels(channels)
             self.http_thread = threading.Thread(
                 target=start_http_server,
                 args=(addr, self.http_ready),

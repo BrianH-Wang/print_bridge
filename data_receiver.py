@@ -8,40 +8,20 @@ import time
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
+from channels import (
+    ANY_PATH, CONCURRENT, DEFAULT_REPLY_TIMEOUT, MAX_BODY_BYTES, ONEWAY,
+    RESPONSE_DEFAULTS, RESPONSE_LABELS, SERIAL, TWOWAY,
+    build_body, describe_channel, http_status_for, make_channel, route,
+)
 from logger import print_log, shorten
 
 DEFAULT_PORT = 13213
-MAX_BODY_BYTES = 16 * 1024 * 1024
 
-ONEWAY = "oneway"       # 设备 → 本程序 → 前端，收下就回 200
-TWOWAY = "twoway"       # 设备 → 本程序 → 前端 → 本程序 → 设备，要等前端回一条再应答
-CONCURRENT = "concurrent"   # 多条请求同时处理，2 不必等 1 回来
-SERIAL = "serial"           # 单发：一条处理完（拿到回复或超时）才轮到下一条
-
-DEFAULT_REPLY_TIMEOUT = 10.0
-
-# HTTP 应答表：按「场景」而不是按状态码索引 —— 同一个码可能对应两种问题
-# （503 既可能是没人接、也可能是排队没轮到），分开才说得清是哪一种。
-# 码和文案都可以在界面上改；{} 里的占位符由对应场景填。
-RESPONSE_DEFAULTS = {
-    "ok":            {"code": 200, "message": "数据已接收并处理"},
-    "ok_reply":      {"code": 200, "message": "前端已处理并回复"},
-    "bad_json":      {"code": 400, "message": "JSON 解析失败：{error}"},
-    "too_large":     {"code": 413, "message": "请求体过大，上限 {limit} 字节"},
-    "no_client":     {"code": 503, "message": "无 WebSocket 客户端连接，无法取得回复"},
-    "queue_timeout": {"code": 503, "message": "单发模式排队等待超过 {timeout}s"},
-    "reply_timeout": {"code": 504, "message": "等待前端回复超时（{timeout}s）"},
-}
-
-# (场景名, 什么时候会返回, 可用占位符)，界面上照这个顺序列出来
-RESPONSE_LABELS = [
-    ("ok",            "接收成功（单向）",   "单向模式下转发给前端后立即返回", ""),
-    ("ok_reply",      "接收成功（双向）",   "双向模式下拿到前端回复后返回，body 的 data 里是回复内容", ""),
-    ("bad_json",      "请求体不是合法 JSON", "解析 POST 过来的 body 失败", "{error}"),
-    ("too_large",     "请求体过大",         f"body 超过 {MAX_BODY_BYTES} 字节", "{limit}"),
-    ("no_client",     "没有前端连接",       "双向模式下一个 WebSocket 客户端都没连着", ""),
-    ("queue_timeout", "排队超时",           "单发模式下排到超时都没轮到", "{timeout}"),
-    ("reply_timeout", "等待回复超时",       "双向模式下前端在超时时间内没回 external_reply", "{timeout}"),
+# 常量和应答表都下沉到 channels.py 了（本模块要 import 它来路由，反过来就成环）。
+# 这里 re-export 一份，`from data_receiver import TWOWAY` 这类老写法照常能用。
+__all__ = [
+    "ANY_PATH", "CONCURRENT", "DEFAULT_PORT", "DEFAULT_REPLY_TIMEOUT", "MAX_BODY_BYTES",
+    "ONEWAY", "RESPONSE_DEFAULTS", "RESPONSE_LABELS", "SERIAL", "TWOWAY",
 ]
 
 _responses = {}
@@ -51,45 +31,54 @@ _responses_lock = threading.Lock()
 _clients = set()
 _clients_lock = threading.Lock()
 
-# 数据流配置，由 GUI 在启动服务时按当前方案下发
-_flow = {
-    "mode": ONEWAY,
-    "timeout": DEFAULT_REPLY_TIMEOUT,
-    "dispatch": CONCURRENT,
-}
-_flow_lock = threading.Lock()
+# 接收通道，由 GUI 在启动服务时按当前方案下发。
+# 至少留一条兜底通道，否则任何 POST 都会 404 —— 老方案升级上来就是这一条。
+_channels = [make_channel()]
+_channels_lock = threading.Lock()
 
 # 单发模式下用它把请求排成一队；并发模式下不碰。
 # 用叫号（ticket）而不是普通 Lock：Lock 不保证先到先得，
 # 三条请求排队时完成顺序可能是 2、3、1，设备侧看到的次序就乱了。
-_serial_cv = threading.Condition()
-_serial_state = {"next_ticket": 0, "serving": 0, "abandoned": set()}
+#
+# 每条通道各一条队：图片通道慢的时候，不该把数值通道也堵死。
+_serial_states = {}
+_serial_guard = threading.Lock()
 
 
-def _serial_acquire(deadline):
+def _serial_state_for(key):
+    with _serial_guard:
+        state = _serial_states.get(key)
+        if state is None:
+            state = {"cv": threading.Condition(), "next_ticket": 0,
+                     "serving": 0, "abandoned": set()}
+            _serial_states[key] = state
+        return state
+
+
+def _serial_acquire(state, deadline):
     """按到达顺序排队，超时没轮到就放弃。返回是否拿到号。"""
-    with _serial_cv:
-        ticket = _serial_state["next_ticket"]
-        _serial_state["next_ticket"] += 1
+    with state["cv"]:
+        ticket = state["next_ticket"]
+        state["next_ticket"] += 1
 
-        while ticket != _serial_state["serving"]:
+        while ticket != state["serving"]:
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 # 放弃的号要登记，轮到它时由前一位直接跳过，否则整队会卡死
-                _serial_state["abandoned"].add(ticket)
+                state["abandoned"].add(ticket)
                 return False
-            _serial_cv.wait(remaining)
+            state["cv"].wait(remaining)
         return True
 
 
-def _serial_release():
-    with _serial_cv:
-        serving = _serial_state["serving"] + 1
-        while serving in _serial_state["abandoned"]:
-            _serial_state["abandoned"].discard(serving)
+def _serial_release(state):
+    with state["cv"]:
+        serving = state["serving"] + 1
+        while serving in state["abandoned"]:
+            state["abandoned"].discard(serving)
             serving += 1
-        _serial_state["serving"] = serving
-        _serial_cv.notify_all()
+        state["serving"] = serving
+        state["cv"].notify_all()
 
 _httpd = None
 _httpd_lock = threading.Lock()
@@ -103,22 +92,43 @@ def init_history(history_queue):
     _history_queue = history_queue
 
 
+def configure_channels(channels):
+    """由 GUI 在启动服务时下发当前方案的接收通道。"""
+    clean = [c for c in (channels or []) if isinstance(c, dict) and c.get("path")]
+    if not clean:
+        clean = [make_channel()]
+    with _channels_lock:
+        _channels[:] = clean
+        _serial_states.clear()   # 通道换了，旧队列的号作废，留着会让新请求等一个永不到来的号
+
+    print_log(f"🔁 接收通道 {len(clean)} 条：")
+    for channel in clean:
+        extra = "自定义应答外壳" if channel.get("envelope") else "默认应答外壳"
+        print_log(f"   · {describe_channel(channel)}"
+                  f" · {'单发' if channel['dispatch'] == SERIAL else '并发'}"
+                  + (f" · 超时 {channel['timeout']:g}s" if channel["flow"] == TWOWAY else "")
+                  + f" · {extra}")
+
+
 def configure_flow(mode=ONEWAY, timeout=DEFAULT_REPLY_TIMEOUT, dispatch=CONCURRENT):
-    """由 GUI 在启动服务时下发当前方案的数据流设置。"""
-    with _flow_lock:
-        _flow["mode"] = mode if mode in (ONEWAY, TWOWAY) else ONEWAY
-        _flow["timeout"] = float(timeout) if timeout else DEFAULT_REPLY_TIMEOUT
-        _flow["dispatch"] = dispatch if dispatch in (CONCURRENT, SERIAL) else CONCURRENT
-    print_log(
-        f"🔁 数据流: {'双向（等前端回复）' if _flow['mode'] == TWOWAY else '单向'}"
-        f" · {'单发' if _flow['dispatch'] == SERIAL else '并发'}"
-        + (f" · 超时 {_flow['timeout']:g}s" if _flow["mode"] == TWOWAY else "")
-    )
+    """老接口：把单份数据流设置包成一条兜底通道。
+
+    只剩没迁移到通道的调用方（和测试）在用，行为和以前一致：
+    任何路径都接，全走这一套设置。
+    """
+    configure_channels([make_channel(
+        path=ANY_PATH, flow=mode, timeout=timeout, dispatch=dispatch,
+    )])
 
 
-def flow_config():
-    with _flow_lock:
-        return dict(_flow)
+def channel_list():
+    with _channels_lock:
+        return list(_channels)
+
+
+def channel_for(path):
+    with _channels_lock:
+        return route(_channels, path)
 
 
 def configure_responses(mapping):
@@ -141,11 +151,17 @@ def configure_responses(mapping):
         _responses.update(clean)
 
 
-def response_for(key, **fmt):
-    """取某个场景的 (状态码, 文案)；占位符缺参数时原样返回，不让打印链路因为文案报错。"""
+def response_for(key, channel=None, **fmt):
+    """取某个场景的 (状态码, 文案)。
+
+    三层叠加：通道自己的覆盖 > 全局应答表 > 出厂默认。
+    占位符缺参数时原样返回，不让打印链路因为文案报错。
+    """
+    entry = dict(RESPONSE_DEFAULTS[key])
     with _responses_lock:
-        entry = _responses.get(key)
-    entry = entry or RESPONSE_DEFAULTS[key]
+        entry.update(_responses.get(key) or {})
+    entry.update(((channel or {}).get("responses") or {}).get(key) or {})
+
     try:
         message = entry["message"].format(**fmt)
     except (KeyError, IndexError, ValueError):
@@ -153,13 +169,14 @@ def response_for(key, **fmt):
     return int(entry["code"]), message
 
 
-def _record_history(data, forwarded, msg_id=None):
+def _record_history(data, forwarded, msg_id=None, channel=None):
     if _history_queue is not None:
         _history_queue.put({
             "time": datetime.now(),
             "data": data,
             "forwarded": forwarded,
             "msg_id": msg_id,
+            "channel": channel,
         })
 
 
@@ -372,29 +389,39 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _reply(self, key, extra=None, **fmt):
-        """所有对设备的应答都走这里，码和文案取自可配置的应答表。"""
-        code, message = response_for(key, **fmt)
-        body = {"success": code < 400, "code": code}
-        body["message" if code < 400 else "error"] = message
-        body.update(extra or {})
-        self._send_json(code, body)
+    def _reply(self, key, extra=None, channel=None, **fmt):
+        """所有对设备的应答都走这里。
+
+        码和文案取自可配置的应答表；body 的形状交给通道的应答外壳
+        （没配就是内置形状，和以前完全一样）。
+        """
+        code, message = response_for(key, channel, **fmt)
+        body = build_body(channel, key, code, message, extra)
+        self._send_json(http_status_for(channel, code), body)
 
     def do_GET(self):
         self._send_json(200, {
             "success": True,
             "code": 200,
             "clients": client_count(),
+            "channels": [c["key"] for c in channel_list()],
         })
 
     def do_POST(self):
+        # 先定通道：应答外壳、超时、单双向全看它，连报错都要按它的形状回
+        channel = channel_for(self.path)
+        if channel is None:
+            print_log(f"⚠️ 没有匹配 {self.path} 的通道，已拒绝")
+            self._reply("no_route", path=self.path)
+            return
+
         try:
             length = int(self.headers.get("Content-Length", 0))
         except ValueError:
             length = 0
 
         if length > MAX_BODY_BYTES:
-            self._reply("too_large", limit=MAX_BODY_BYTES)
+            self._reply("too_large", channel=channel, limit=MAX_BODY_BYTES)
             return
 
         body = self.rfile.read(length) if length else b""
@@ -403,33 +430,36 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             data = json.loads(body.decode("utf-8"))
         except Exception as e:
             print_log(f"❌ JSON 解析失败: {e}")
-            self._reply("bad_json", error=str(e))
+            self._reply("bad_json", channel=channel, error=str(e))
             return
 
         # 日志里折叠超长字段，转发给前端的仍是完整数据
-        print_log(f"📥 接收数据: {shorten(data)}")
+        print_log(f"📥 [{channel['key']}] 接收数据: {shorten(data)}")
 
-        flow = flow_config()
         # 设备最多等这么久：单发模式下排队和等回复共用这一份预算，
         # 不会因为前面排了几条就把设备晾成 2 倍、3 倍超时。
-        deadline = time.monotonic() + flow["timeout"]
+        deadline = time.monotonic() + channel["timeout"]
 
-        if flow["dispatch"] == SERIAL:
-            if not _serial_acquire(deadline):
-                print_log("⏱ 单发模式排队超时，已拒绝本条")
-                self._reply("queue_timeout", timeout=f"{flow['timeout']:g}")
+        if channel["dispatch"] == SERIAL:
+            state = _serial_state_for(channel["key"])
+            if not _serial_acquire(state, deadline):
+                print_log(f"⏱ [{channel['key']}] 单发模式排队超时，已拒绝本条")
+                self._reply("queue_timeout", channel=channel,
+                            timeout=f"{channel['timeout']:g}")
                 return
             try:
-                self._dispatch(data, flow, deadline)
+                self._dispatch(data, channel, deadline)
             finally:
-                _serial_release()
+                _serial_release(state)
         else:
-            self._dispatch(data, flow, deadline)
+            self._dispatch(data, channel, deadline)
 
-    def _dispatch(self, data, flow, deadline):
+    def _dispatch(self, data, channel, deadline):
         """把数据转给前端；双向模式下等前端回一条，再拿它答复设备。"""
-        twoway = flow["mode"] == TWOWAY
-        payload = {"type": "external_data", "data": data}
+        twoway = channel["flow"] == TWOWAY
+        payload = {"type": "external_data", "channel": channel["key"], "data": data}
+        if channel.get("label"):
+            payload["channelLabel"] = channel["label"]
         event = None
         pre_id = None
         if twoway:
@@ -441,7 +471,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         # 双向下 ack 的有效期跟着回复超时走，否则 3s 就过期了、界面会误报未确认
         msg_id, sent = broadcast_with_ack(
             payload,
-            ack_timeout=flow["timeout"] if twoway else None,
+            ack_timeout=channel["timeout"] if twoway else None,
             message_id=pre_id,
         )
         if sent:
@@ -449,30 +479,30 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         else:
             print_log("⚠️ 无 WebSocket 客户端连接，数据未转发")
 
-        _record_history(data, sent, msg_id)
+        _record_history(data, sent, msg_id, channel["key"])
 
         if not twoway:
-            self._reply("ok", extra={"forwarded": sent})
+            self._reply("ok", extra={"forwarded": sent}, channel=channel)
             return
 
         if not sent:
             # 没人接，等下去也不会有回复，直接告诉设备
             _close_reply_slot(msg_id)
-            self._reply("no_client", extra={"forwarded": 0})
+            self._reply("no_client", extra={"forwarded": 0}, channel=channel)
             return
 
         got = event.wait(timeout=max(deadline - time.monotonic(), 0))
         entry = _close_reply_slot(msg_id)
 
         if not got:
-            print_log(f"⏱ 等待前端回复超时 ({flow['timeout']:g}s): {msg_id}")
-            self._reply("reply_timeout", extra={"forwarded": sent},
-                        timeout=f"{flow['timeout']:g}")
+            print_log(f"⏱ 等待前端回复超时 ({channel['timeout']:g}s): {msg_id}")
+            self._reply("reply_timeout", extra={"forwarded": sent}, channel=channel,
+                        timeout=f"{channel['timeout']:g}")
             return
 
         reply = entry["reply"] if entry else None
         print_log(f"↩️ 前端回复 {entry['from'] if entry else '?'}: {shorten(reply)}")
-        self._reply("ok_reply", extra={"forwarded": sent, "data": reply})
+        self._reply("ok_reply", extra={"forwarded": sent, "data": reply}, channel=channel)
 
 
 def _parse_addr(addr):

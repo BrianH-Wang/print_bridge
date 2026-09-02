@@ -5,7 +5,11 @@
 
 import re
 
-from data_receiver import DEFAULT_REPLY_TIMEOUT
+from channels import (
+    ANY_PATH, CONCURRENT, DEFAULT_CHANNEL_KEY, DEFAULT_REPLY_TIMEOUT, MAX_CHANNELS,
+    ONEWAY, SERIAL, TWOWAY, make_channel, normalize_path,
+)
+from channels import KEY_PATTERN as CHANNEL_KEY_PATTERN
 from printer_utils import (
     DEFAULT_PRINTER_KEY, DEFAULT_RAW_PORT, KEY_PATTERN, SYSTEM_PRINTER, make_printer,
 )
@@ -110,4 +114,48 @@ def sanitize_printers(item):
         queue=legacy_queue,
         host=legacy_host,
         port=clamp_port(item.get("printer_port")),
+    )]
+
+
+def sanitize_channels(item):
+    """读回方案里的接收通道；老方案（单份数据流设置）自动迁移成一条兜底通道。"""
+    raw = item.get("channels")
+    channels, seen_keys, seen_paths = [], set(), set()
+
+    if isinstance(raw, list):
+        for entry in raw:
+            if not isinstance(entry, dict):
+                continue
+            key = str(entry.get("key", "")).strip()
+            if not re.fullmatch(CHANNEL_KEY_PATTERN, key) or key in seen_keys:
+                continue
+            path = normalize_path(entry.get("path"))
+            if path in seen_paths:
+                continue   # 路径撞车时留先出现的那条，后面的按没配过处理
+            seen_keys.add(key)
+            seen_paths.add(path)
+            channels.append(make_channel(
+                key=key,
+                label=entry.get("label", ""),
+                path=path,
+                flow=entry.get("flow"),
+                timeout=clamp_timeout(entry.get("timeout")),
+                dispatch=entry.get("dispatch"),
+                envelope=entry.get("envelope"),
+                http_status=entry.get("http_status"),
+                responses=entry.get("responses"),
+            ))
+        if channels:
+            return channels[:MAX_CHANNELS]
+
+    # 老结构：flow_mode / reply_timeout / dispatch_mode 是一份全局设置。
+    # 迁移成路径为 * 的兜底通道 —— 以前任何路径都能 POST，这样升级前后行为不变。
+    return [make_channel(
+        key=DEFAULT_CHANNEL_KEY,
+        label="默认",
+        path=ANY_PATH,
+        flow=item.get("flow_mode") if item.get("flow_mode") in (ONEWAY, TWOWAY) else ONEWAY,
+        timeout=clamp_timeout(item.get("reply_timeout")),
+        dispatch=(item.get("dispatch_mode")
+                  if item.get("dispatch_mode") in (CONCURRENT, SERIAL) else CONCURRENT),
     )]

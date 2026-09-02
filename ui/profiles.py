@@ -12,10 +12,8 @@ from logger import print_log
 from printer_utils import (
     DEFAULT_PRINTER_KEY, SYSTEM_PRINTER, get_available_printers, make_printer,
 )
-from ui.constants import (
-    CONCURRENT, DATA_ADDR, DEFAULT_PROFILE_NAME, MAX_PROFILES, ONEWAY, SERIAL, TWOWAY,
-)
-from ui.helpers import clamp_timeout, normalize_addr, sanitize_printers
+from ui.constants import DATA_ADDR, DEFAULT_PROFILE_NAME, MAX_PROFILES
+from ui.helpers import normalize_addr, sanitize_channels, sanitize_printers
 
 
 class ProfileMixin:
@@ -69,12 +67,9 @@ class ProfileMixin:
             "data_addr": normalize_addr(item.get("data_addr")) or DATA_ADDR,
             "enable_print": bool(item.get("enable_print", False)),
             "enable_data": bool(item.get("enable_data", True)),
-            "flow_mode": item.get("flow_mode") if item.get("flow_mode") in (ONEWAY, TWOWAY) else ONEWAY,
-            "reply_timeout": clamp_timeout(item.get("reply_timeout")),
-            "dispatch_mode": (
-                item.get("dispatch_mode")
-                if item.get("dispatch_mode") in (CONCURRENT, SERIAL) else CONCURRENT
-            ),
+            # 老方案里的 flow_mode / reply_timeout / dispatch_mode 在这里被
+            # sanitize_channels 收成一条兜底通道，之后就不再单独存了
+            "channels": sanitize_channels(item),
         }
 
     def _persist_profiles(self):
@@ -96,9 +91,7 @@ class ProfileMixin:
             "data_addr": normalize_addr(self.addr_input.text()) or self.addr_input.text().strip(),
             "enable_print": self.print_checkbox.isChecked(),
             "enable_data": self.data_checkbox.isChecked(),
-            "flow_mode": self.flow_combo.currentData(),
-            "reply_timeout": clamp_timeout(self.timeout_input.text().strip()),
-            "dispatch_mode": self.dispatch_combo.currentData(),
+            "channels": [dict(c) for c in self.channel_list.channels],
         }
 
     def _apply_profile(self, profile):
@@ -109,14 +102,8 @@ class ProfileMixin:
             self.addr_input.setText(profile["data_addr"])
             self.print_checkbox.setChecked(profile["enable_print"])
             self.data_checkbox.setChecked(profile["enable_data"])
-            self.flow_combo.setCurrentIndex(
-                max(self.flow_combo.findData(profile["flow_mode"]), 0)
-            )
-            self.dispatch_combo.setCurrentIndex(
-                max(self.dispatch_combo.findData(profile["dispatch_mode"]), 0)
-            )
-            self.timeout_input.setText(f"{profile['reply_timeout']:g}")
 
+            self.channel_list.set_channels(profile["channels"])
             self.printer_list.set_printers(profile["printers"])
 
             # 换了台机器 / 打印机没开：不静默改掉配置，只提示，启动时会拦下来
