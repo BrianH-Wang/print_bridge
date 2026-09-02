@@ -14,10 +14,16 @@ from channels import (
     ANY_PATH, ENVELOPE_PRESETS, ENVELOPE_VARIABLES, KEY_PATTERN, TWOWAY,
     build_body, make_channel, normalize_path, validate_envelope,
 )
+from mapping import (
+    CUSTOM, DEFAULT_MESSAGE_TYPE, OUTBOUND_VARIABLES, STANDARD, build_outbound,
+    make_outbound, validate_outbound,
+)
 from ui.constants import (
     DISPATCH_CHOICES, FLOW_CHOICES, HTTP_STATUS_CHOICES, MAX_REPLY_TIMEOUT,
     MIN_REPLY_TIMEOUT,
 )
+from ui.dialogs.field_mapping import FieldMappingPage
+from ui.helpers import sanitize_mapping, sanitize_outbound
 
 # 预览用的假场景：双向拿到前端回复那一档，最能看出 data 放在哪
 PREVIEW_SCENE = ("ok_reply", 200, "操作成功", {"forwarded": 1, "data": {"route": "A"}})
@@ -44,7 +50,14 @@ class ChannelDialog(QDialog):
         box = QVBoxLayout(self)
         tabs = QTabWidget()
         tabs.addTab(self._basic_page(current), "基础")
-        tabs.addTab(self._advanced_page(current), "高级")
+        self.mapping_page = FieldMappingPage(
+            self, current.get("mapping"), current.get("sample"),
+        )
+        self.mapping_page.changed.connect(self._refresh_outbound_preview)
+        tabs.addTab(self.mapping_page, "字段映射")
+        # 两页高级设置按「去向」分，各自短一屏；⚙ 是给人的信号：这里要懂 JSON
+        tabs.addTab(self._outbound_page(current), "发给前端 ⚙")
+        tabs.addTab(self._advanced_page(current), "回给设备 ⚙")
         box.addWidget(tabs)
 
         buttons = QDialogButtonBox(
@@ -60,6 +73,7 @@ class ChannelDialog(QDialog):
 
         self._on_flow_changed()
         self._on_envelope_toggled()
+        self._on_outbound_changed()
 
     # ------------------------------------------------------------------ #
     # 基础页
@@ -131,21 +145,160 @@ class ChannelDialog(QDialog):
         self.timeout_hint.setText("秒" if twoway else "秒　·　单向不会等，这项不生效")
 
     # ------------------------------------------------------------------ #
-    # 高级页
+    # 发给前端的报文
     # ------------------------------------------------------------------ #
+
+    def _outbound_page(self, current):
+        outbound = current.get("outbound") or make_outbound()
+        page = QWidget()
+        box = QVBoxLayout(page)
+        box.setSpacing(10)
+        box.addWidget(self._warning(
+            "改这里是为了迁就已经写死的前端接口。字段名改名在「字段映射」页，"
+            "这一页管的是外面那层报文长什么样。"
+        ))
+
+        form = QFormLayout()
+        self.type_input = QLineEdit(outbound.get("type", DEFAULT_MESSAGE_TYPE))
+        self.type_input.setPlaceholderText(DEFAULT_MESSAGE_TYPE)
+        self.type_input.setToolTip("前端靠 type 分辨这是哪种消息；默认 external_data")
+        self.type_input.textChanged.connect(self._refresh_outbound_preview)
+        form.addRow("消息 type:", self.type_input)
+
+        self.extra_input = QLineEdit(
+            json.dumps(outbound.get("extra") or {}, ensure_ascii=False)
+            if outbound.get("extra") else ""
+        )
+        self.extra_input.setPlaceholderText('{"source": "仓库A"}')
+        self.extra_input.setToolTip("固定附加字段，每条报文都带上；留空表示不加")
+        self.extra_input.textChanged.connect(self._refresh_outbound_preview)
+        form.addRow("固定附加字段:", self.extra_input)
+        box.addLayout(form)
+
+        self.outbound_check = QCheckBox("整条报文自己写（前端接口已写死、连外层都对不上时用）")
+        self.outbound_check.setChecked(outbound.get("envelope") == CUSTOM)
+        self.outbound_check.toggled.connect(self._on_outbound_changed)
+        box.addWidget(self.outbound_check)
+
+        self.outbound_edit = QPlainTextEdit()
+        self.outbound_edit.setPlaceholderText(
+            '{\n  "cmd": "newParcel",\n  "seq": "{{__id}}",\n  "expressNo": "{{expressNo}}"\n}'
+        )
+        if outbound.get("template"):
+            self.outbound_edit.setPlainText(
+                json.dumps(outbound["template"], ensure_ascii=False, indent=2)
+            )
+        self.outbound_edit.setFixedHeight(130)
+        self.outbound_edit.textChanged.connect(self._refresh_outbound_preview)
+        box.addWidget(self.outbound_edit)
+
+        hint = QLabel(
+            "可用：映射后的字段名（如 {{expressNo}}）　+　"
+            + "　".join(f"{{{{{name}}}}}" for name in OUTBOUND_VARIABLES)
+        )
+        hint.setObjectName("hint")
+        hint.setWordWrap(True)
+        hint.setToolTip("\n".join(f"{{{{{k}}}}}  {v}" for k, v in OUTBOUND_VARIABLES.items()))
+        box.addWidget(hint)
+
+        box.addWidget(QLabel("预览（前端将收到的整条报文）:"))
+        self.outbound_preview = QPlainTextEdit()
+        self.outbound_preview.setReadOnly(True)
+        self.outbound_preview.setFixedHeight(130)
+        box.addWidget(self.outbound_preview)
+
+        self.outbound_problem = QLabel()
+        self.outbound_problem.setObjectName("hint")
+        self.outbound_problem.setWordWrap(True)
+        box.addWidget(self.outbound_problem)
+        box.addStretch()
+        return page
+
+    def _on_outbound_changed(self):
+        self.outbound_edit.setEnabled(self.outbound_check.isChecked())
+        self._refresh_outbound_preview()
+
+    def _parse_extra(self):
+        text = self.extra_input.text().strip()
+        if not text:
+            return {}, []
+        try:
+            extra = json.loads(text)
+        except ValueError as e:
+            return {}, [f"固定附加字段不是合法 JSON：{e}"]
+        if not isinstance(extra, dict):
+            return {}, ["固定附加字段要是一个 JSON 对象"]
+        return extra, []
+
+    def _parse_outbound(self):
+        """返回 (出向设置, 问题清单)。"""
+        extra, problems = self._parse_extra()
+        template = None
+        envelope = STANDARD
+
+        if self.outbound_check.isChecked():
+            envelope = CUSTOM
+            text = self.outbound_edit.toPlainText().strip()
+            if not text:
+                problems.append("模板是空的，留空请把上面的勾去掉")
+            else:
+                try:
+                    template = json.loads(text)
+                except ValueError as e:
+                    problems.append(f"报文模板不是合法 JSON：{e}")
+
+        outbound = make_outbound(envelope, self.type_input.text().strip(), extra, template)
+        if envelope == CUSTOM and template is not None:
+            problems += validate_outbound(outbound, self.mapping_page.target_fields())
+        return outbound, problems
+
+    def _refresh_outbound_preview(self):
+        outbound, problems = self._parse_outbound()
+        if problems:
+            self.outbound_preview.setPlainText("")
+            self.outbound_problem.setText("❌ " + "　·　".join(problems))
+            return
+
+        sample = self.mapping_page.sample()
+        if sample is None:
+            self.outbound_preview.setPlainText("")
+            self.outbound_problem.setText("在「字段映射」页贴一条样例，这里就能看到实际效果")
+            return
+
+        preview_channel = {
+            "key": self.key_input.text().strip() or "channel",
+            "label": self.label_input.text().strip(),
+            "path": normalize_path(self.path_input.text()),
+            "mapping": self.mapping_page.values(),
+            "outbound": outbound,
+        }
+        payload, map_problems = build_outbound(
+            preview_channel, sample, "示例消息id",
+            expect_reply=self.flow_combo.currentData() == TWOWAY,
+        )
+        self.outbound_preview.setPlainText(json.dumps(payload, ensure_ascii=False, indent=2))
+        self.outbound_problem.setText(
+            "❌ 字段映射有问题：" + "　·　".join(map_problems) if map_problems else ""
+        )
+
+    # ------------------------------------------------------------------ #
+    # 回给设备的应答
+    # ------------------------------------------------------------------ #
+
+    @staticmethod
+    def _warning(text):
+        warn = QLabel("⚠️ " + text + " 全部保持默认时，行为和不配置完全一样。")
+        warn.setObjectName("hint")
+        warn.setWordWrap(True)
+        return warn
 
     def _advanced_page(self, current):
         page = QWidget()
         box = QVBoxLayout(page)
         box.setSpacing(10)
-
-        warn = QLabel(
-            "⚠️ 这里的设置需要了解 HTTP 和 JSON。基础页已经够用，不确定就别动这里。"
-            "全部保持默认时，行为和不配置完全一样。"
-        )
-        warn.setObjectName("hint")
-        warn.setWordWrap(True)
-        box.addWidget(warn)
+        box.addWidget(self._warning(
+            "这里的设置需要了解 HTTP 和 JSON，用来迁就已经写死的设备接口。"
+        ))
 
         form = QFormLayout()
         self.http_status_combo = QComboBox()
@@ -291,10 +444,33 @@ class ChannelDialog(QDialog):
             QMessageBox.warning(self, "错误", "应答外壳有问题：\n\n" + "\n".join(problems))
             return
 
+        _, problems = self._parse_outbound()
+        if problems:
+            QMessageBox.warning(self, "错误", "发给前端的报文有问题：\n\n" + "\n".join(problems))
+            return
+
+        problems = self.mapping_page.problems()
+        if problems:
+            # 映射问题只按样例算出来，样例本身可能不全 —— 提醒但不拦，
+            # 真到运行时缺字段会按「必填字段缺失时」的策略处理
+            answer = QMessageBox.question(
+                self, "字段映射",
+                "按当前样例试算，字段映射有这些问题：\n\n" + "\n".join(problems)
+                + "\n\n样例不全时这是正常的。仍然保存？",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+
         super().accept()
 
     def values(self):
         template, _ = self._parse_envelope()
+        outbound, _ = self._parse_outbound()
+        mapping = self.mapping_page.values()
+        sample = self.mapping_page.sample()
+
         return make_channel(
             key=self.key_input.text().strip(),
             label=self.label_input.text().strip(),
@@ -305,4 +481,9 @@ class ChannelDialog(QDialog):
             envelope=template,
             http_status=self.http_status_combo.currentData(),
             responses=self._responses,
+            mapping=sanitize_mapping(mapping),
+            outbound=sanitize_outbound(outbound),
+            # 样例跟着通道存：下次打开对话框预览立刻能用，
+            # 不用再去翻设备文档重新粘一遍
+            sample=sample,
         )

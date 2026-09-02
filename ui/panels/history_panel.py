@@ -16,9 +16,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from data_receiver import broadcast, expire_pending_acks, init_history, pending_ack_snapshot
+from data_receiver import (
+    broadcast, channel_for_key, expire_pending_acks, init_history, new_message_id,
+    pending_ack_snapshot,
+)
 from history_store import HistoryStore, default_dir
 from logger import print_log, shorten
+from mapping import build_outbound
 from ui.constants import (
     DEFAULT_DATA_COLUMNS, FIELD_LABELS, HISTORY_FIXED_COLUMNS, HISTORY_POLL_MS,
     MAX_HISTORY, MIN_VISIBLE_ROWS, ROW_HEIGHT, THUMB_SIZE,
@@ -507,13 +511,27 @@ class HistoryPanel(QWidget):
         self._resend_record(record)
 
     def _resend_record(self, record):
-        """按记录重发：搜索窗口和主窗口共用。"""
+        """按记录重发：搜索窗口和主窗口共用。
+
+        走和实时推送同一条组装链路（字段转译 + 报文形状），否则通道配了
+        转译时，重发出去的形状和当初推的不一样，前端一样认不出来。
+        历史里存的是设备发来的原始数据，重发时按当前通道配置重新转译一遍。
+        """
         payload = self.store.restore_payload(record)
         if payload is None:
             QMessageBox.warning(self, "错误", "图片文件已丢失，无法还原这条数据")
             return
 
-        sent = broadcast({"type": "external_data", "data": payload})
+        channel = channel_for_key(record.get("channel"))
+        message, problems = build_outbound(channel, payload, new_message_id())
+        if problems:
+            QMessageBox.warning(
+                self, "错误",
+                "按当前通道配置转译失败，无法重发：\n\n" + "\n".join(problems)
+            )
+            return
+
+        sent = broadcast(message)
         if sent:
             print_log(f"🔁 重发数据给 {sent} 个客户端: {shorten(payload)}")
             record["forwarded"] = sent

@@ -19,12 +19,18 @@ ui/
     log_panel.py      L 日志页签（自带队列与定时器）
     history_panel.py  Y 接收历史页签（记录、筛选、重发、ack 都归它）
   dialogs/
-    image_preview.py  printer.py  http_response.py  channel.py
+    image_preview.py  printer.py  http_response.py
+    channel.py        field_mapping.py             ← 通道对话框与它的「字段映射」页
     advanced_search.py  history_search.py          ← 弹窗一个模块一个
 ```
 
-界面之外，`channels.py` 是接收通道的模型层（路由 + 应答外壳，纯函数、不依赖 Qt）。
-「一条链接怎么收、回什么形状」的逻辑都在那里，界面只负责填表。
+界面之外有两个纯函数模型层，都不依赖 Qt、可以直接单测：
+
+- `channels.py` —— 一条链接**怎么收**：路由、回给设备的应答外壳
+- `mapping.py` —— 收到之后**怎么翻译、发给前端什么形状**：路径取值、转换算子、字段映射、出向报文
+
+界面只负责填表，两边的校验函数（`validate_envelope` / `validate_outbound` / `map_fields`）
+同时供对话框做实时预览和运行时使用，不会出现"预览通过但运行时报错"。
 
 ---
 
@@ -215,11 +221,27 @@ E2 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `h
 | P4 | 确认与错误提示 | `QMessageBox` | 切换方案有未保存修改、删除、校验失败等 |
 | P5 | HTTP 响应配置 | `HttpResponseDialog`（`http_response.py`） | E2，8 个场景各自的状态码与说明，带「全部恢复默认」；行高 `ROW_HEIGHT`、列宽 `WHEN_COLUMN_WIDTH`/`CODE_COLUMN_WIDTH`、单元格留白 `CELL_MARGIN`；状态码按 2xx/4xx/5xx 上色（`_paint_code()`）；状态码框不显示微调箭头，高度与其它输入框统一为 `INPUT_HEIGHT` |
 | P6 | 添加 / 编辑打印机 | `PrinterDialog`（`printer.py`） | D2 / D3，填 key、备注、方式、队列或 IP:端口，带「测试连接」 |
-| P7 | 添加 / 编辑通道 | `ChannelDialog`（`channel.py`） | E4 / E5，分「基础 / 高级」两页。基础页：key、备注、路径、单双向、超时、并发。高级页：HTTP 状态码策略、自定义应答外壳（模板 + 常用形状下拉 + 实时预览），详见 [高级配置.md](高级配置.md) |
+| P7 | 添加 / 编辑通道 | `ChannelDialog`（`channel.py`） | E4 / E5，四页，见下表 |
 
-P7 高级页的铁律：**所有项的默认值 = 当前行为**，全默认时和不配置完全一样。
-模板改坏（非法 JSON、用了不存在的变量、漏了 `{{__code}}`）当场在预览下方标红且存不进去，
-校验在 `channels.validate_envelope()`。
+P7 的四页按**数据流经的顺序**排，不是按难度排——照着从左到右走一遍就是一条数据的一生：
+
+| 页 | 管什么 | 门槛 | 代码 |
+| --- | --- | --- | --- |
+| 基础 | key、备注、路径、单双向、超时、并发 | 低 | `_basic_page()` |
+| 字段映射 | 模式 + 字段表（来源\|目标\|转换\|必填\|默认值）+ 样例 + 实时预览 | 中，会看 JSON 就行 | `FieldMappingPage`（`field_mapping.py`） |
+| 发给前端 ⚙ | 消息 type、固定附加字段、整条报文自定义模板 | 高 | `_outbound_page()` |
+| 回给设备 ⚙ | HTTP 状态码策略、应答外壳模板 | 高 | `_advanced_page()` |
+
+- 标题里的 ⚙ 是给人的信号：**这两页要懂 JSON**，前两页不用。
+- 铁律：**所有项的默认值 = 当前行为**，全默认时和不配置完全一样。
+- 三处模板都带**实时预览**，改坏了当场在预览下方标红且存不进去：
+  应答外壳 `channels.validate_envelope()`、出向报文 `mapping.validate_outbound()`、
+  字段映射按样例试算 `mapping.map_fields()`。
+- 字段映射的问题**只警告不拦**（点确定时问一句）——样例常常不全，
+  真到运行时缺字段会按「必填字段缺失时」的策略处理。
+- 「按样例填充」把样例里的字段全列成映射行（`mapping.flatten_keys()`），
+  用户只要改右边的目标名，不用自己琢磨 `a.b[0].c` 怎么写。
+- 样例本身跟着通道一起存（`channel["sample"]`），只用于预览，不参与运行时。
 
 `HistorySearchDialog` 通过 `self.panel` 拿记录、图片和重发能力，parent 必须是 `HistoryPanel`。
 

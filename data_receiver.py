@@ -14,6 +14,7 @@ from channels import (
     build_body, describe_channel, http_status_for, make_channel, route,
 )
 from logger import print_log, shorten
+from mapping import build_outbound
 
 DEFAULT_PORT = 13213
 
@@ -129,6 +130,21 @@ def channel_list():
 def channel_for(path):
     with _channels_lock:
         return route(_channels, path)
+
+
+def channel_for_key(key):
+    """按 key 找通道，找不到返回 None。
+
+    历史重发要用：记录里存的是当初那条通道的 key，通道后来被删掉或改名时
+    返回 None，调用方按「没有通道」处理（标准形状、不转译），即老行为。
+    """
+    if not key:
+        return None
+    with _channels_lock:
+        for channel in _channels:
+            if channel["key"] == key:
+                return channel
+    return None
 
 
 def configure_responses(mapping):
@@ -258,15 +274,18 @@ def new_message_id():
     return f"{int(time.time() * 1000) % 10**12:012d}{secrets.token_hex(2)}"
 
 
-def broadcast_with_ack(payload, ack_timeout=None, message_id=None):
+def broadcast_with_ack(payload, ack_timeout=None, message_id=None, inject_id=True):
     """推送并注册待确认。返回 (message_id, sent_clients)。
 
     与原 broadcast() 共存：旧调用方（带打印路径）继续用 broadcast() 不带 ack。
     ack_timeout: 双向模式下前端要等业务处理完才回，比默认 3s 长，由调用方指定。
     message_id: 双向模式要先按 id 开好等待槽再发，否则前端回得比开槽还快就接不住。
+    inject_id:  报文里还没有 id 时由这里补一个。走 mapping.build_outbound 的
+                调用方自己已经把 id 放到位了（自定义模板下 id 未必叫 id），传 False。
     """
     message_id = message_id or new_message_id()
-    payload = {**payload, "id": message_id}
+    if inject_id:
+        payload = {**payload, "id": message_id}
     sent = broadcast(payload)
 
     if sent == 0:
@@ -448,6 +467,14 @@ class _CallbackHandler(BaseHTTPRequestHandler):
                             timeout=f"{channel['timeout']:g}")
                 return
             try:
+                # 轮到了但预算已经用光：别再推给前端然后立刻放弃 —— 那样数据发出去了
+                # 却没人等它的回复，设备还会收到一个牛头不对马嘴的「等待回复超时」。
+                # 单向没有等待这回事，照常发。
+                if channel["flow"] == TWOWAY and time.monotonic() >= deadline:
+                    print_log(f"⏱ [{channel['key']}] 排到时预算已用完，未推送")
+                    self._reply("queue_timeout", channel=channel,
+                                timeout=f"{channel['timeout']:g}")
+                    return
                 self._dispatch(data, channel, deadline)
             finally:
                 _serial_release(state)
@@ -455,24 +482,28 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             self._dispatch(data, channel, deadline)
 
     def _dispatch(self, data, channel, deadline):
-        """把数据转给前端；双向模式下等前端回一条，再拿它答复设备。"""
+        """转译字段、组装报文、推给前端；双向模式下等前端回一条再答复设备。"""
         twoway = channel["flow"] == TWOWAY
-        payload = {"type": "external_data", "channel": channel["key"], "data": data}
-        if channel.get("label"):
-            payload["channelLabel"] = channel["label"]
-        event = None
-        pre_id = None
-        if twoway:
-            payload["expectReply"] = True
-            # 先开槽再广播：本机前端回得可能比这行代码还快，槽没开好就接不住了
-            pre_id = new_message_id()
-            event = _open_reply_slot(pre_id)
+
+        # id 提前生成：自定义报文模板里要用 {{__id}} 把它嵌进前端认识的字段里，
+        # 双向还要先按这个 id 开好等待槽——本机前端回得可能比广播这行还快。
+        msg_id = new_message_id()
+        payload, problems = build_outbound(channel, data, msg_id, expect_reply=twoway)
+
+        if problems:
+            # 转译不过就别往前端发半成品，直接告诉设备哪里不对
+            print_log(f"❌ [{channel['key']}] 字段转译失败: {'；'.join(problems)}")
+            self._reply("map_failed", channel=channel, error="；".join(problems))
+            return
+
+        event = _open_reply_slot(msg_id) if twoway else None
 
         # 双向下 ack 的有效期跟着回复超时走，否则 3s 就过期了、界面会误报未确认
         msg_id, sent = broadcast_with_ack(
             payload,
             ack_timeout=channel["timeout"] if twoway else None,
-            message_id=pre_id,
+            message_id=msg_id,
+            inject_id=False,   # build_outbound 已经把 id 放到该放的位置了
         )
         if sent:
             print_log(f"📤 已推送给 {sent} 个 WebSocket 客户端: {msg_id}")

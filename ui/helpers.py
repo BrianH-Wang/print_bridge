@@ -10,6 +10,9 @@ from channels import (
     ONEWAY, SERIAL, TWOWAY, make_channel, normalize_path,
 )
 from channels import KEY_PATTERN as CHANNEL_KEY_PATTERN
+from mapping import (
+    DEFAULT_MESSAGE_TYPE, PASSTHROUGH, STANDARD, make_mapping, make_outbound,
+)
 from printer_utils import (
     DEFAULT_PRINTER_KEY, DEFAULT_RAW_PORT, KEY_PATTERN, SYSTEM_PRINTER, make_printer,
 )
@@ -117,6 +120,30 @@ def sanitize_printers(item):
     )]
 
 
+def sanitize_mapping(raw):
+    """洗一遍字段映射；透传（等于没配）时返回 None，不往方案里存空壳。"""
+    if not isinstance(raw, dict):
+        return None
+    clean = make_mapping(raw.get("mode"), raw.get("fields"), raw.get("on_missing"))
+    # 两端字段名都空的行是用户加了没填，直接丢掉
+    clean["fields"] = [f for f in clean["fields"] if f["source"] and f["target"]]
+    if clean["mode"] == PASSTHROUGH or not clean["fields"]:
+        return None
+    return clean
+
+
+def sanitize_outbound(raw):
+    """洗一遍出向报文设置；等于默认行为时返回 None。"""
+    if not isinstance(raw, dict):
+        return None
+    clean = make_outbound(raw.get("envelope"), raw.get("type"),
+                          raw.get("extra"), raw.get("template"))
+    is_default = (clean["envelope"] == STANDARD
+                  and clean["type"] == DEFAULT_MESSAGE_TYPE
+                  and not clean["extra"])
+    return None if is_default else clean
+
+
 def sanitize_channels(item):
     """读回方案里的接收通道；老方案（单份数据流设置）自动迁移成一条兜底通道。"""
     raw = item.get("channels")
@@ -144,6 +171,9 @@ def sanitize_channels(item):
                 envelope=entry.get("envelope"),
                 http_status=entry.get("http_status"),
                 responses=entry.get("responses"),
+                mapping=sanitize_mapping(entry.get("mapping")),
+                outbound=sanitize_outbound(entry.get("outbound")),
+                sample=entry.get("sample"),
             ))
         if channels:
             return channels[:MAX_CHANNELS]

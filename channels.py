@@ -46,6 +46,7 @@ RESPONSE_DEFAULTS = {
     "queue_timeout": {"code": 503, "message": "单发模式排队等待超过 {timeout}s"},
     "reply_timeout": {"code": 504, "message": "等待前端回复超时（{timeout}s）"},
     "no_route":      {"code": 404, "message": "没有匹配该路径的通道：{path}"},
+    "map_failed":    {"code": 400, "message": "字段转译失败：{error}"},
 }
 
 # (场景 key, 场景名, 什么时候会返回, 可用占位符)，界面上照这个顺序列出来
@@ -58,6 +59,7 @@ RESPONSE_LABELS = [
     ("queue_timeout", "排队超时",           "单发模式下排到超时都没轮到", "{timeout}"),
     ("reply_timeout", "等待回复超时",       "双向模式下前端在超时时间内没回 external_reply", "{timeout}"),
     ("no_route",      "路径没有对应通道",   "POST 的路径没有匹配的通道，也没有兜底通道", "{path}"),
+    ("map_failed",    "字段转译失败",       "必填字段缺失或转换算子出错，数据没有转发给前端", "{error}"),
 ]
 
 
@@ -90,14 +92,23 @@ def normalize_path(path):
 
 def make_channel(key=DEFAULT_CHANNEL_KEY, label="", path=ANY_PATH, flow=ONEWAY,
                  timeout=DEFAULT_REPLY_TIMEOUT, dispatch=CONCURRENT,
-                 envelope=None, http_status=FOLLOW_CODE, responses=None):
+                 envelope=None, http_status=FOLLOW_CODE, responses=None,
+                 mapping=None, outbound=None, sample=None):
     """一条接收通道的完整描述。
 
     key       英文标识，日志和历史里用它区分是哪条链接来的
     label     中文备注，只给人看
     path      匹配的路径；ANY_PATH 表示兜底
-    envelope  应答外壳模板；None = 用内置形状（也就是今天的行为）
+    envelope  回给设备的 body 模板；None = 用内置形状（也就是今天的行为）
     responses 只放「和全局表不一样」的那几个场景，其余自动落回全局
+    mapping   发给前端前的字段转译；None = 原样透传
+    outbound  发给前端的报文形状；None = 标准形状
+    sample    设备发来的一条样例，只用于界面上的实时预览，不参与运行时
+
+    mapping / outbound 这里只原样收着不做规整：规整逻辑在 mapping.py，
+    而 mapping.py 要 import 本模块的 render_template，反过来 import 会成环。
+    读方案时由 ui.helpers.sanitize_channels 洗一遍，运行时 mapping.py
+    自己对缺项做兜底。
     """
     return {
         "key": (str(key or DEFAULT_CHANNEL_KEY)).strip(),
@@ -109,6 +120,9 @@ def make_channel(key=DEFAULT_CHANNEL_KEY, label="", path=ANY_PATH, flow=ONEWAY,
         "envelope": envelope if isinstance(envelope, dict) and envelope else None,
         "http_status": http_status if http_status in (FOLLOW_CODE, FIXED_200) else FOLLOW_CODE,
         "responses": sanitize_responses(responses),
+        "mapping": mapping if isinstance(mapping, dict) and mapping else None,
+        "outbound": outbound if isinstance(outbound, dict) and outbound else None,
+        "sample": sample if isinstance(sample, dict) and sample else None,
     }
 
 
