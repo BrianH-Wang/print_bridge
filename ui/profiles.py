@@ -5,14 +5,18 @@
 """
 
 import json
+from pathlib import Path
 
-from PyQt6.QtWidgets import QInputDialog, QMessageBox
+from PyQt6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 
+from config_io import build_export, dumps, parse_import
 from logger import print_log
 from printer_utils import (
     DEFAULT_PRINTER_KEY, SYSTEM_PRINTER, get_available_printers, make_printer,
 )
 from ui.constants import DATA_ADDR, DEFAULT_PROFILE_NAME, MAX_PROFILES
+from ui.dialogs.template import SAVE as TEMPLATE_SAVE
+from ui.dialogs.template import TemplateDialog
 from ui.helpers import normalize_addr, sanitize_channels, sanitize_printers
 
 
@@ -272,6 +276,135 @@ class ProfileMixin:
         self._refresh_profile_combo()
         self._apply_profile(self.profiles[self._profile_index(self.current_profile)])
         print_log(f"🗑 已删除方案「{removed}」")
+
+    # ------------------------------------------------------------------ #
+    # 整套配置进出磁盘
+    # ------------------------------------------------------------------ #
+
+    def export_profile(self):
+        """把当前方案存成 json，可以发给别的门店直接导入。"""
+        index = self._profile_index(self.current_profile)
+        if index < 0:
+            return
+
+        # 导出界面上此刻的样子，不是上次保存的样子：有未保存改动时
+        # 导出个旧版本最坑人，而且他还不知道
+        profile = {"name": self.current_profile, **self._current_config()}
+        payload = build_export(profile, self.http_responses)
+
+        path, _ = QFileDialog.getSaveFileName(
+            self, "导出配置", f"{self.current_profile}.json", "配置文件 (*.json)"
+        )
+        if not path:
+            return
+        try:
+            Path(path).write_text(dumps(payload), encoding="utf-8")
+        except OSError as e:
+            QMessageBox.warning(self, "错误", f"写入失败：{e}")
+            return
+        print_log(f"📤 已导出方案「{self.current_profile}」到 {path}")
+        QMessageBox.information(self, "导出配置", f"已导出到\n{path}")
+
+    def import_profile(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "导入配置", "", "配置文件 (*.json);;所有文件 (*)"
+        )
+        if not path:
+            return
+        try:
+            text = Path(path).read_text(encoding="utf-8")
+        except OSError as e:
+            QMessageBox.warning(self, "错误", f"读取失败：{e}")
+            return
+
+        profile, responses, problems = parse_import(text)
+        if problems:
+            QMessageBox.warning(self, "导入配置", "这个文件用不了：\n\n" + "\n".join(problems))
+            return
+        self._install_profile(profile, responses, f"文件 {Path(path).name}")
+
+    def open_templates(self):
+        dialog = TemplateDialog(self)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+
+        payload = dialog.payload()
+        if dialog.action == TEMPLATE_SAVE:
+            path, _ = QFileDialog.getSaveFileName(
+                self, "保存模板", f"{dialog.name()}.json", "配置文件 (*.json)"
+            )
+            if not path:
+                return
+            try:
+                Path(path).write_text(dumps(payload), encoding="utf-8")
+            except OSError as e:
+                QMessageBox.warning(self, "错误", f"写入失败：{e}")
+                return
+            print_log(f"📄 已保存模板「{dialog.name()}」到 {path}")
+            QMessageBox.information(
+                self, "配置模板",
+                f"已保存到\n{path}\n\n改完之后用「导入…」装回来。"
+            )
+            return
+
+        self._install_profile(payload["profile"], payload.get("http_responses"),
+                              f"模板「{dialog.name()}」")
+
+    def _install_profile(self, incoming, responses, source):
+        """把导入/模板来的方案装进来。重名时问一句，绝不静默覆盖。"""
+        if len(self.profiles) >= MAX_PROFILES:
+            QMessageBox.warning(
+                self, "错误", f"最多保存 {MAX_PROFILES} 套方案，请先删除不用的"
+            )
+            return
+
+        name = str(incoming.get("name", "")).strip()
+        index = self._profile_index(name)
+        if index >= 0:
+            answer = QMessageBox.question(
+                self, "导入配置",
+                f"已经有一套叫「{name}」的方案了。\n\n"
+                "「Yes」覆盖它，「No」另存为一套新的，「Cancel」放弃。",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No
+                | QMessageBox.StandardButton.Cancel,
+                QMessageBox.StandardButton.No,
+            )
+            if answer == QMessageBox.StandardButton.Cancel:
+                return
+            if answer == QMessageBox.StandardButton.No:
+                name = self._unused_name(name)
+                index = -1
+
+        profile = self._sanitize_profile(name, incoming)
+        if index >= 0:
+            self.profiles[index] = profile
+        else:
+            self.profiles.append(profile)
+
+        # 应答表是全局的，跟着一起进来——只装通道不装应答等于只装了一半
+        if responses:
+            merged = dict(self.http_responses)
+            for key, entry in responses.items():
+                if key in merged and isinstance(entry, dict):
+                    merged[key] = {**merged[key], **entry}
+            self.http_responses = merged
+            self.settings.setValue(
+                "http_responses", json.dumps(self.http_responses, ensure_ascii=False)
+            )
+
+        self.current_profile = name
+        self._persist_profiles()
+        self._refresh_profile_combo()
+        self._apply_profile(self.profiles[self._profile_index(name)])
+        print_log(f"📥 已从{source}导入方案「{name}」")
+
+    def _unused_name(self, base):
+        """给重名的方案找个空位：仓库A → 仓库A (2) → 仓库A (3)…"""
+        for n in range(2, MAX_PROFILES + 2):
+            candidate = f"{base} ({n})"
+            if self._profile_index(candidate) < 0:
+                return candidate
+        return f"{base} ({MAX_PROFILES})"
 
     def set_default_profile(self):
         if self._profile_index(self.current_profile) < 0:

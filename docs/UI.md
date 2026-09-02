@@ -100,11 +100,21 @@ A–E 五张卡都是 `QGroupBox`，标题文字里的 emoji 前有两个空格�
 | A4 | 重命名按钮 | 重命名 | `self.profile_buttons[2]` | `rename_profile()` |
 | A5 | 删除按钮 | 删除 | `self.profile_buttons[3]` | `delete_profile()` |
 | A6 | 设为默认按钮 | 设为默认 | `self.profile_buttons[4]` | `set_default_profile()` |
+| A8 | 导出按钮 | 配置文件: 导出… | 第二行 `io_row` | `export_profile()` |
+| A9 | 导入按钮 | 导入… | 第二行 `io_row` | `import_profile()` |
+| A10 | 模板按钮 | 模板… | 第二行 `io_row` | `open_templates()` → P8 |
 | A7 | 方案提示行 | ★ 默认 · 已保存 / 有未保存的修改 | `self.profile_hint` | `_update_profile_hint()` |
 
 按钮的文字 / 提示 / 样式 / 回调集中在 `_build_profile_card()` 里的 `buttons` 列表，
 加减按钮改这一处即可（栅格列号和 hint 跨列数会跟着 `len(buttons)` 走）。
 默认方案在 A1 里显示为 `★ 名称`，真名存在 item 的 `data` 里。
+
+A8–A10 单独占第二行——挤进第一行就是八个按钮排排站，看不出哪些是一类。
+**A8 导出在服务运行中也能点**（纯读，出问题时正好要把配置发出来看），
+A9/A10 会改配置，跟其它按钮一起被 `_set_inputs_enabled()` 禁用。
+导出的是**界面上此刻的样子**而不是上次保存的样子：有未保存改动时导出个旧版本最坑人。
+文件格式和内置模板都在 `config_io.py`；导入重名时弹三选一
+（覆盖 / 另存为新的 / 取消），绝不静默覆盖。
 
 ## B 功能选择卡 — `main_window._build_function_card()`
 
@@ -222,13 +232,14 @@ E2 打开的应答表是**全局**的（不进方案），存 `QSettings` 的 `h
 | P4 | 确认与错误提示 | `QMessageBox` | 切换方案有未保存修改、删除、校验失败等 |
 | P5 | HTTP 响应配置 | `HttpResponseDialog`（`http_response.py`） | E2，8 个场景各自的状态码与说明，带「全部恢复默认」；行高 `ROW_HEIGHT`、列宽 `WHEN_COLUMN_WIDTH`/`CODE_COLUMN_WIDTH`、单元格留白 `CELL_MARGIN`；状态码按 2xx/4xx/5xx 上色（`_paint_code()`）；状态码框不显示微调箭头，高度与其它输入框统一为 `INPUT_HEIGHT` |
 | P6 | 添加 / 编辑打印机 | `PrinterDialog`（`printer.py`） | D2 / D3，填 key、备注、方式、队列或 IP:端口，带「测试连接」 |
-| P7 | 添加 / 编辑通道 | `ChannelDialog`（`channel.py`） | E4 / E5，四页，见下表 |
+| P7 | 添加 / 编辑通道 | `ChannelDialog`（`channel.py`） | E4 / E5，五页，见下表 |
+| P8 | 配置模板 | `TemplateDialog`（`template.py`） | A10，选一份内置模板，可「保存为文件」或「直接套用」；模板内容在 `config_io.TEMPLATES` |
 
 P7 的四页按**数据流经的顺序**排，不是按难度排——照着从左到右走一遍就是一条数据的一生：
 
 | 页 | 管什么 | 门槛 | 代码 |
 | --- | --- | --- | --- |
-| 基础 | key、备注、路径、单双向、超时、并发 | 低 | `_basic_page()` |
+| 基础 | key、备注、路径、单双向、超时、并发 + 实时「这条通道怎么用」 | 低 | `_basic_page()` |
 | 字段映射 | 模式 + 字段表（来源\|目标\|转换\|必填\|默认值）+ 样例 + 实时预览 | 中，会看 JSON 就行 | `FieldMappingPage`（`field_mapping.py`） |
 | 配对 | 角色（不参与/主报文/附加数据）、配对组、配对字段，两侧各自的参数 | 中 | `_pair_page()` |
 | 发给前端 ⚙ | 消息 type、固定附加字段、整条报文自定义模板 | 高 | `_outbound_page()` |
@@ -249,6 +260,11 @@ P7 的四页按**数据流经的顺序**排，不是按难度排——照着从�
 - 「按样例填充」把样例里的字段全列成映射行（`mapping.flatten_keys()`），
   用户只要改右边的目标名，不用自己琢磨 `a.b[0].c` 怎么写。
 - 样例本身跟着通道一起存（`channel["sample"]`），只用于预览，不参与运行时。
+- 基础页的输入框用 `AllNonFixedFieldsGrow` 拉满宽度（不然长路径和占位符都显示不全），
+  两个下拉反过来限了 `setMaximumWidth`——里面只有几个字，拉满显得空。
+- 基础页下半部分本来是一大片空白（对话框高度由「字段映射」页撑起来），
+  现在放实时说明 `_refresh_basic_summary()`：拼一条能直接复制去跑的 curl，
+  加上这条通道当前配置下的行为。监听地址由 `ChannelListWidget.base_addr` 传进来。
 
 `HistorySearchDialog` 通过 `self.panel` 拿记录、图片和重发能力，parent 必须是 `HistoryPanel`。
 

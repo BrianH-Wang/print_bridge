@@ -242,6 +242,29 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
             grid.addWidget(button, 0, column)
             self.profile_buttons.append(button)
 
+        # 第二行：整套配置进出磁盘。通道那套东西配一次要花点工夫，
+        # 但只需要配一次——对接的人配好导出，其他门店导入即可。
+        io_row = QWidget()
+        io_box = QHBoxLayout(io_row)
+        io_box.setContentsMargins(0, 0, 0, 0)
+        io_box.setSpacing(8)
+        io_box.addWidget(QLabel("配置文件:"))
+        for text, tip, slot, lock in (
+            # 导出只是读，服务跑着也该能用——出问题时正好要把配置发出来看
+            ("导出…", "把当前方案存成 json，发给别的门店或留底", self.export_profile, False),
+            ("导入…", "从 json 装回一套方案", self.import_profile, True),
+            ("模板…", "从配好的模板开始，省得从零填", self.open_templates, True),
+        ):
+            button = QPushButton(text)
+            button.setObjectName("secondary")
+            button.setToolTip(tip)
+            button.clicked.connect(slot)
+            io_box.addWidget(button)
+            if lock:
+                self.profile_buttons.append(button)
+        io_box.addStretch()
+        grid.addWidget(io_row, 1, 0, 1, 2 + len(buttons))
+
         self.profile_hint = QLabel()
         self.profile_hint.setObjectName("hint")
         self.profile_hint.setMinimumHeight(20)   # 容纳一行 hint 文字，避免被 grid 拉伸/裁切
@@ -251,7 +274,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         hint_layout.setContentsMargins(0, 0, 0, 0)
         hint_layout.setSpacing(0)
         hint_layout.addWidget(self.profile_hint)
-        grid.addWidget(hint_row, 1, 0, 1, 2 + len(buttons))
+        grid.addWidget(hint_row, 2, 0, 1, 2 + len(buttons))
 
         card.setLayout(grid)
         return card
@@ -395,6 +418,8 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         # 再在这行重复一遍就成了两处真相
         host = addr.split("/")[0]
         channels = getattr(self, "channel_list", None)
+        if channels is not None:
+            channels.base_addr = host   # 通道对话框拿它拼 curl 示例
         count = len(channels.channels) if channels else 0
         self.data_hint.setText(
             f"设备 POST 到 http://{host}/…　·　{count} 条通道按路径分流"

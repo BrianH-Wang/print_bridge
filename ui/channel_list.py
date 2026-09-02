@@ -26,6 +26,8 @@ class ChannelListWidget(QWidget):
         super().__init__(parent)
         self.channels = []
         self.editable = True    # 服务运行中不让改
+        # 主窗口的监听地址，只用来在通道对话框里拼一条能直接跑的 curl 示例
+        self.base_addr = ""
 
         grid = QGridLayout(self)
         grid.setContentsMargins(0, 0, 0, 0)
@@ -154,7 +156,7 @@ class ChannelListWidget(QWidget):
             QMessageBox.warning(self, "错误", f"最多配置 {MAX_CHANNELS} 条通道")
             return
         keys, paths = self._taken()
-        dialog = ChannelDialog(self, None, keys, paths)
+        dialog = ChannelDialog(self, None, keys, paths, self.base_addr)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self.channels.append(dialog.values())
@@ -167,7 +169,7 @@ class ChannelListWidget(QWidget):
         if row is None or not self.editable:
             return
         keys, paths = self._taken(skip=row)
-        dialog = ChannelDialog(self, self.channels[row], keys, paths)
+        dialog = ChannelDialog(self, self.channels[row], keys, paths, self.base_addr)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         self.channels[row] = dialog.values()

@@ -6,8 +6,9 @@ from ui.dialogs.history_search import HistorySearchDialog
 from ui.dialogs.http_response import HttpResponseDialog
 from ui.dialogs.image_preview import ImagePreviewDialog
 from ui.dialogs.printer import PrinterDialog
+from ui.dialogs.template import TemplateDialog
 
 __all__ = [
     "AdvancedSearchDialog", "ChannelDialog", "HistorySearchDialog",
-    "HttpResponseDialog", "ImagePreviewDialog", "PrinterDialog",
+    "HttpResponseDialog", "ImagePreviewDialog", "PrinterDialog", "TemplateDialog",
 ]

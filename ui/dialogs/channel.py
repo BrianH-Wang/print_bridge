@@ -25,7 +25,7 @@ from mapping import (
 )
 from ui.constants import (
     DISPATCH_CHOICES, FLOW_CHOICES, HTTP_STATUS_CHOICES, MAX_REPLY_TIMEOUT,
-    MIN_REPLY_TIMEOUT, PAIR_MISSING_CHOICES, PAIR_ROLE_CHOICES,
+    MIN_REPLY_TIMEOUT, PAIR_MISSING_CHOICES, PAIR_ROLE_CHOICES, SERIAL,
 )
 from ui.dialogs.field_mapping import FieldMappingPage
 from ui.helpers import sanitize_mapping, sanitize_outbound
@@ -41,10 +41,12 @@ class ChannelDialog(QDialog):
     高级页管报文形状，改了才需要懂 JSON。两页的默认值都等于当前行为。
     """
 
-    def __init__(self, parent, channel=None, taken_keys=(), taken_paths=()):
+    def __init__(self, parent, channel=None, taken_keys=(), taken_paths=(), base_addr=""):
         super().__init__(parent)
         self.setWindowTitle("编辑通道" if channel else "添加通道")
-        self.setMinimumWidth(600)
+        self.setMinimumWidth(680)
+        # 监听地址只用来在基础页拼一条能直接复制去跑的 curl，不参与保存
+        self.base_addr = base_addr or ""
         current = channel or {}
         self.taken_keys = {k for k in taken_keys if k != current.get("key")}
         self.taken_paths = {p for p in taken_paths if p != current.get("path")}
@@ -77,7 +79,8 @@ class ChannelDialog(QDialog):
         buttons.rejected.connect(self.reject)
         box.addWidget(buttons)
 
-        self._on_pair_role_changed()
+        self._on_pair_role_changed()   # 里面会调 _on_flow_changed → 刷新基础页说明
+        self._refresh_basic_summary()
         self._on_flow_changed()
         self._on_envelope_toggled()
         self._on_outbound_changed()
@@ -88,11 +91,21 @@ class ChannelDialog(QDialog):
 
     def _basic_page(self, current):
         page = QWidget()
-        form = QFormLayout(page)
+        outer = QVBoxLayout(page)
+        outer.setSpacing(12)
+
+        holder = QWidget()
+        form = QFormLayout(holder)
+        form.setContentsMargins(0, 0, 0, 0)
+        # 输入框跟着对话框一起变宽：不然只有内容那么点宽度，
+        # 连 "sorter_data / sorter_image" 这种占位符都显示不全
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        outer.addWidget(holder)
 
         self.key_input = QLineEdit(current.get("key", ""))
         self.key_input.setPlaceholderText("sorter_data / sorter_image")
         self.key_input.setToolTip("日志和历史里用它区分数据是哪条链接来的；小写字母开头")
+        self.key_input.textChanged.connect(self._refresh_basic_summary)
         form.addRow("Key:", self.key_input)
 
         self.label_input = QLineEdit(current.get("label", ""))
@@ -105,6 +118,7 @@ class ChannelDialog(QDialog):
             "设备 POST 过来的路径。填 * 表示兜底：没被别的通道认领的路径都归它。\n"
             "路径不区分大小写，结尾的 / 和 ?参数 会自动忽略。"
         )
+        self.path_input.textChanged.connect(self._refresh_basic_summary)
         form.addRow("路径:", self.path_input)
 
         self.flow_combo = QComboBox()
@@ -114,6 +128,8 @@ class ChannelDialog(QDialog):
             max(self.flow_combo.findData(current.get("flow")), 0)
         )
         self.flow_combo.currentIndexChanged.connect(self._on_flow_changed)
+        # 输入框拉满是为了显示得下长路径，下拉里只有几个字，拉满反而空
+        self.flow_combo.setMaximumWidth(260)
         form.addRow("数据流:", self.flow_combo)
 
         timeout_row = QWidget()
@@ -122,6 +138,7 @@ class ChannelDialog(QDialog):
         timeout_box.setSpacing(6)
         self.timeout_input = QLineEdit(f"{float(current.get('timeout') or 10):g}")
         self.timeout_input.setFixedWidth(72)
+        self.timeout_input.textChanged.connect(self._refresh_basic_summary)
         self.timeout_hint = QLabel("秒　·　只有双向才会等")
         self.timeout_hint.setObjectName("hint")
         timeout_box.addWidget(self.timeout_input)
@@ -138,18 +155,71 @@ class ChannelDialog(QDialog):
         self.dispatch_combo.setToolTip(
             "并发：多条请求同时处理。\n单发：一条处理完才轮到下一条，本通道单独排队。"
         )
+        self.dispatch_combo.currentIndexChanged.connect(self._refresh_basic_summary)
+        self.dispatch_combo.setMaximumWidth(140)
         form.addRow("分发:", self.dispatch_combo)
 
-        tip = QLabel("单向 = 收下就回；双向 = 等前端回一条，再拿它答复设备。")
-        tip.setObjectName("hint")
-        tip.setWordWrap(True)
-        form.addRow(tip)
+        # 下半页原本是一大片空白（对话框高度是被「字段映射」页撑起来的）。
+        # 拿来放一段实时说明：这条通道配成现在这样，设备该怎么调、会得到什么。
+        outer.addWidget(QLabel("这条通道怎么用:"))
+        self.basic_summary = QPlainTextEdit()
+        self.basic_summary.setReadOnly(True)
+        outer.addWidget(self.basic_summary, 1)
         return page
+
+    def _refresh_basic_summary(self):
+        if not hasattr(self, "basic_summary"):
+            return   # 还在拼界面，控件没建全
+
+        key = self.key_input.text().strip() or "（未填 Key）"
+        path = normalize_path(self.path_input.text())
+        twoway = self.flow_combo.currentData() == TWOWAY
+        serial = self.dispatch_combo.currentData() == SERIAL
+        base = (self.base_addr or "localhost:13213").split("/")[0]
+        url = f"http://{base}{'/任意路径' if path == ANY_PATH else path}"
+
+        lines = ["设备这样调用：", "",
+                 f"  curl -X POST {url} \\",
+                 '       -H "Content-Type: application/json" \\',
+                 """       -d '{"code":"…"}'""", ""]
+
+        role = getattr(self, "pair_role_combo", None)
+        pair_role = role.currentData() if role is not None else PAIR_NONE
+
+        if pair_role == PAIR_ATTACH:
+            # 附加通道根本不推前端，别在这儿说"转给前端"跟下面的说明打架
+            lines += ["收下就回 200，存进配对暂存区等主报文来取。"]
+        elif twoway:
+            timeout = self.timeout_input.text().strip() or "10"
+            lines += [
+                f"收到后转给前端，然后等前端回一条，最多等 {timeout} 秒，",
+                "拿到回复才答复设备；等不到回 504。",
+            ]
+        else:
+            lines += ["收到后转给前端，立刻回 200，不等前端。"]
+
+        if serial and pair_role != PAIR_ATTACH:
+            lines.append("本通道单发排队：一条处理完才轮到下一条（别的通道不受影响）。")
+
+        if path == ANY_PATH:
+            lines += ["", "路径填的是 *（兜底）：没被别的通道认领的路径都归它。"]
+
+        if pair_role == PAIR_ATTACH:
+            lines += ["", "配对里的「附加数据」：不会单独推给前端，所以固定单向。",
+                      "它的内容会被并进同组主报文里一起发出去。"]
+        elif pair_role == PAIR_PRIMARY:
+            lines += ["", "配对里的「主报文」：先等同组的附加数据齐了，再把合并后的结果发给前端。"]
+            lines += [f'前端收到的报文里带 "channel": "{key}"，据此区分数据来自哪条链接。']
+        else:
+            lines += ["", f'前端收到的报文里带 "channel": "{key}"，据此区分数据来自哪条链接。']
+
+        self.basic_summary.setPlainText("\n".join(lines))
 
     def _on_flow_changed(self):
         twoway = self.flow_combo.currentData() == TWOWAY
         self.timeout_input.setEnabled(twoway)
         self.timeout_hint.setText("秒" if twoway else "秒　·　单向不会等，这项不生效")
+        self._refresh_basic_summary()
 
     # ------------------------------------------------------------------ #
     # 配对合流
