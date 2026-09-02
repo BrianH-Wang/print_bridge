@@ -343,7 +343,7 @@ class ProfileMixin:
             print_log(f"📄 已保存模板「{dialog.name()}」到 {path}")
             QMessageBox.information(
                 self, "配置模板",
-                f"已保存到\n{path}\n\n改完之后用「导入…」装回来。"
+                f"已保存到\n{path}\n\n改完之后用「导入」装回来。"
             )
             return
 

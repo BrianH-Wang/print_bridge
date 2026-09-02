@@ -568,7 +568,7 @@ class ChannelDialog(QDialog):
         preset_box.setContentsMargins(0, 0, 0, 0)
         preset_box.setSpacing(6)
         self.preset_combo = QComboBox()
-        self.preset_combo.addItem("选一个常用形状…", None)
+        self.preset_combo.addItem("选一个常用形状", None)
         for text, template in ENVELOPE_PRESETS:
             self.preset_combo.addItem(text, template)
         self.preset_combo.currentIndexChanged.connect(self._apply_preset)

@@ -251,9 +251,10 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         io_box.addWidget(QLabel("配置文件:"))
         for text, tip, slot, lock in (
             # 导出只是读，服务跑着也该能用——出问题时正好要把配置发出来看
-            ("导出…", "把当前方案存成 json，发给别的门店或留底", self.export_profile, False),
-            ("导入…", "从 json 装回一套方案", self.import_profile, True),
-            ("模板…", "从配好的模板开始，省得从零填", self.open_templates, True),
+            # 不加省略号：本意是「点了会弹窗」的老约定，但实际会被读成文字没显示全
+            ("导出", "把当前方案存成 json，发给别的门店或留底", self.export_profile, False),
+            ("导入", "从 json 装回一套方案", self.import_profile, True),
+            ("模板", "从配好的模板开始，省得从零填", self.open_templates, True),
         ):
             button = QPushButton(text)
             button.setObjectName("secondary")
@@ -353,7 +354,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.addr_input.textChanged.connect(self._update_data_hint)
         self.addr_input.textChanged.connect(self._update_profile_hint)
 
-        self.http_resp_btn = QPushButton("HTTP 响应…")
+        self.http_resp_btn = QPushButton("HTTP 响应")
         self.http_resp_btn.setObjectName("secondary")
         self.http_resp_btn.setToolTip("维护各种情况下返回给设备的 HTTP 码和说明（全局，不进方案）")
         self.http_resp_btn.clicked.connect(self.open_http_responses)

@@ -100,9 +100,9 @@ A–E 五张卡都是 `QGroupBox`，标题文字里的 emoji 前有两个空格�
 | A4 | 重命名按钮 | 重命名 | `self.profile_buttons[2]` | `rename_profile()` |
 | A5 | 删除按钮 | 删除 | `self.profile_buttons[3]` | `delete_profile()` |
 | A6 | 设为默认按钮 | 设为默认 | `self.profile_buttons[4]` | `set_default_profile()` |
-| A8 | 导出按钮 | 配置文件: 导出… | 第二行 `io_row` | `export_profile()` |
-| A9 | 导入按钮 | 导入… | 第二行 `io_row` | `import_profile()` |
-| A10 | 模板按钮 | 模板… | 第二行 `io_row` | `open_templates()` → P8 |
+| A8 | 导出按钮 | 配置文件: 导出 | 第二行 `io_row` | `export_profile()` |
+| A9 | 导入按钮 | 导入 | 第二行 `io_row` | `import_profile()` |
+| A10 | 模板按钮 | 模板 | 第二行 `io_row` | `open_templates()` → P8 |
 | A7 | 方案提示行 | ★ 默认 · 已保存 / 有未保存的修改 | `self.profile_hint` | `_update_profile_hint()` |
 
 按钮的文字 / 提示 / 样式 / 回调集中在 `_build_profile_card()` 里的 `buttons` 列表，
@@ -162,7 +162,7 @@ A9/A10 会改配置，跟其它按钮一起被 `_set_inputs_enabled()` 禁用。
 | --- | --- | --- | --- | --- |
 | E0 | 卡片本体 | 获取数据配置  🌐 | `self.data_group` | 勾 B2 才显示 |
 | E1 | 监听地址输入框 | 监听地址: | `self.addr_input` | 只决定 host:port；路径部分仅作示例，收不收由 E3 的通道表说了算 |
-| E2 | HTTP 响应按钮 | HTTP 响应… | `self.http_resp_btn` | 打开 P5；运行中也能点，改完立即生效 |
+| E2 | HTTP 响应按钮 | HTTP 响应 | `self.http_resp_btn` | 打开 P5；运行中也能点，改完立即生效 |
 | E3 | 通道表格 | Key / 备注 / 路径 / 方向 / 超时 / 配对 / 应答外壳 | `channel_list.table` | 只读，双击一行 = 编辑；渲染在 `render()`，列名 `CHANNEL_COLUMNS` |
 | E4 | 添加按钮 | 添加 | `channel_list.buttons["添加"]` | `add()` → 打开 P7，上限 `MAX_CHANNELS` |
 | E5 | 编辑按钮 | 编辑 | `channel_list.buttons["编辑"]` | `edit()` |
