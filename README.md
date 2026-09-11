@@ -2,8 +2,8 @@
 
 **中文** | [English](README.en.md)
 
-> 📖 **只是要用这个程序、不关心实现？看 [使用说明](docs/使用说明.md)** ——
-> 面向普通使用者的操作手册，不需要懂编程。本文是面向开发与对接的技术说明。
+> 📖 本文讲**这个程序能做什么、怎么做到的**。
+> 只是要用它 → [使用说明](docs/使用说明.md)；要改它或打包 → [开发指南](docs/开发指南.md)。
 
 一个跨平台（Windows / macOS / Linux）的**本地打印与数据中转服务**，带 PyQt6 图形界面。
 
@@ -379,104 +379,24 @@
          ──WS print(printer=cup)────▶                    ──▶ 杯贴机(:9100)
          ◀──WS print_status(printer, jobId)──────────────────┘   （三台并行）
 
-单向  外部系统 ──POST JSON──▶ HTTP :13213/callback ──转发──▶ 前端页面(WS external_data)
-双向  外部系统 ◀── 200+回复 ── HTTP :13213/callback ◀─回复── 前端页面(WS external_reply)
+单向  上游系统 ──POST JSON──▶ HTTP :13213/<路径> ──转发──▶ 前端页面(WS external_data)
+双向  上游系统 ◀── 200+回复 ── HTTP :13213/<路径> ◀─回复── 前端页面(WS external_reply)
 ```
 
-## 项目结构
+收到之后转发之前，数据还会依次经过**字段转译**和**配对合流**（都可不配，默认原样透传）：
 
-| 文件 | 作用 |
+```
+上游 ─▶ ① 按路径选通道 ─▶ ② 字段转译 ─▶ ③ 配对合流 ─▶ ④ 组装报文 ─▶ 前端
+                            改名/转换      合并另一条链接    type/形状
+```
+
+## 更多文档
+
+| 文档 | 给谁看 |
 | --- | --- |
-| `main.py` | 程序入口，启动 Qt 应用和主窗口 |
-| `gui.py` | 兼容转发，界面已拆到 `ui/` 包 |
-| `ui/main_window.py` | 主窗口：拼装各配置卡与页签 |
-| `ui/constants.py` / `ui/helpers.py` | 界面常量；与 Qt 无关的纯函数（可直接单测） |
-| `ui/printer_list.py` | 打印机列表组件（表格 + 增删改 + 设为默认） |
-| `ui/profiles.py` / `ui/server_control.py` | 配置方案、启停服务（挂在主窗口上的 mixin） |
-| `ui/panels/` | 日志、接收历史两个页签，各自持有队列与定时器 |
-| `ui/dialogs/` | 图片预览、打印机、HTTP 响应、历史搜索等弹窗，一个模块一个 |
-| `theme.py` | 白天/黑夜配色 token 与样式表生成，跟随系统的解析逻辑 |
-| `history_store.py` | 接收历史落盘：图片存文件、元数据存 jsonl、重发时还原 payload |
-| `websocket_server.py` | 启动 WebSocket 服务（asyncio），支持 stop_event 优雅停止 |
-| `websocket_handler.py` | 单个 WebSocket 连接的消息处理：打印、ack、双向回复(external_reply)、耗时统计 |
-| `data_receiver.py` | HTTP 回调服务 + 全局 WebSocket 连接注册与转发 |
-| `printer_utils.py` | 打印机枚举、base64 转 PDF、跨平台打印、网络直连(RAW 9100)发送与连通性探测 |
-| `logger.py` | 基于队列的日志封装，带时间戳 |
-| `docs/UI.md` | 界面元素对照表：每个控件的编号 / 名称 / 变量 / 构建方法，改 UI 时按编号定位 |
+| [使用说明](docs/使用说明.md) | **使用者**：安装、配置、日常操作、出问题怎么办 |
+| [开发指南](docs/开发指南.md) | **开发者**：环境、代码分层、本地联调、打包、CI、已知的坑 |
+| [UI.md](docs/UI.md) | 改界面时按编号定位控件 |
+| [高级配置](docs/高级配置.md) | 八组高级配置的设计与实现进度 |
+| [对接案例](docs/对接-几何智造分拣设备.md) | 一个真实设备从头对接到通的完整记录 |
 
-## 环境与依赖
-
-- Python 3.13（项目自带 `.venv`）
-- `PyQt6`
-- `websockets`
-- 打印相关（按平台二选一，需自行安装）：
-  - Windows：`pywin32`
-  - macOS / Linux：`pycups`（`import cups`）
-
-```bash
-pip install PyQt6 websockets
-# Windows
-pip install pywin32
-# macOS / Linux
-pip install pycups
-```
-
-## 运行
-
-```bash
-python main.py
-```
-
-1. 勾选需要的功能（默认只开「获取数据」，「自动打印」需手动勾选）。勾选后对应的配置卡片才会出现。
-2. 设置 WebSocket 端口；勾选了「自动打印」时选择打印方式（系统打印机或 IP:9100 直连）。
-3. 点击「启动服务器」，日志窗口会显示 WebSocket 与 HTTP 的监听状态。
-4. 点击「停止服务器」关闭两个服务。
-
-## 打包
-
-```bash
-.venv/bin/python -m pip install pyinstaller
-.venv/bin/python -m PyInstaller --noconfirm print_bridge.spec
-# macOS 进一步打 DMG:
-bash scripts/make_dmg.sh
-```
-
-各平台产物:
-
-| 平台 | 产物 | 体积参考 |
-| --- | --- | --- |
-| macOS | `dist/Print Bridge.app`、`dist/Print Bridge.dmg` | 75 MB / 30 MB |
-| Windows | `dist/print_bridge/print_bridge.exe` | 25–30 MB |
-| Linux | `dist/print_bridge/print_bridge` | 25–28 MB |
-
-PyInstaller 不支持交叉编译,**Windows 与 Linux 的包必须在各自的目标机器上构建**(GitHub Actions 矩阵是常见做法)。
-
-## 首次启动被防火墙 / Gatekeeper 拦截
-
-**macOS**:`Print Bridge.app` 没有 Apple Developer 签名时,首次双击会被 Gatekeeper 拦下,显示"无法打开,因为无法验证开发者"。处理方式,任选其一:
-
-```bash
-# 1) 自己/团队内部用:删掉隔离属性,以后不再被拦
-xattr -dr com.apple.quarantine "/Applications/Print Bridge.app"
-
-# 2) 或者在 Finder 里:右键(按住 Ctrl 点)Print Bridge.app → "打开" → 在弹窗再点"打开"
-#    之后系统记住它,双击就可以直接进。
-
-# 3) 正式分发:申请 Apple Developer ID(年费),做 codesign + notarytool 公证,
-#    这样任何 mac 都能直接装,不弹警告。
-```
-
-`Print Bridge.app` 启动后系统防火墙会在「隐私与安全 → 防火墙」里提示是否允许接受网络连接(因为内置 HTTP :13213 与 WebSocket 服务都需要监听端口),**点"允许"**;启动过一次之后再启不会重复询问。
-
-**Windows**:SmartScreen 弹出"Windows 已保护你的电脑" → 点"更多信息" → "仍要运行",只在首次出现。系统的 Defender 防火墙同理,首次会弹"是否允许此应用通过防火墙",勾上"专用网络"和"公用网络"都行,因为它只监听本地回环。
-
-**Linux**:不需要特别处理,AppArmor / iptables 之类通常不拦截用户进程直接跑的 GUI 程序,直接 `./print_bridge/print_bridge` 即可;若服务端口被 SELinux 拦截会报 `permission denied`,改用临时 `setenforce 0` 排除。
-
-## 说明与限制
-
-- 启动后会回查端口是否真的绑定成功;被占用时状态栏变红提示并自动回滚到「已停止」,不会显示成运行中。
-- WebSocket 监听地址：Windows 上绑定 `localhost`，macOS / Linux 上绑定 `0.0.0.0`。
-- 数据获取地址可在界面上自由填写，并随「配置方案」整套切换；默认仍是 `localhost:13213/callback`。
-- 待打印的 PDF 写在系统临时目录的 `print_application_server/` 下，超过 24 小时的旧文件会在下次打印时自动清理。
-- 日志中超过 60 字符的字段会折叠成「头部....尾部[N字符]」，避免 base64 图片刷屏；**转发给前端的仍是完整数据**。
-- 打印本身是阻塞操作，已放到独立线程执行，不会卡住 WebSocket 消息收发。
