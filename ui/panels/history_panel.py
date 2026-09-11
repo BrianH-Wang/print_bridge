@@ -551,13 +551,6 @@ class HistoryPanel(QWidget):
             return
         self.history_table.item(row, self._sent_column()).setText(str(record["forwarded"]))
 
-    def clear_history(self):
-        """保留为空方法以兼容旧设置 / 日志中曾出现的「清空历史」字样；
-        界面已不提供入口，调用方删除此逻辑。
-        """
-        pass
-        print_log("🗑 历史记录已清空")
-
     # ------------------------------------------------------------------ #
     # 队列消费：历史与 ack 都从工作线程来，统一在这里落到界面
     # ------------------------------------------------------------------ #
