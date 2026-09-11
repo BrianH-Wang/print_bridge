@@ -6,6 +6,7 @@
 
 import base64
 import json
+import os
 import shutil
 import sys
 from datetime import datetime
@@ -28,13 +29,62 @@ _SIGNATURES = [
 ]
 
 
+APP_DIR_NAME = "Print Bridge"
+
+
 def default_dir():
-    """默认存储目录：程序所在目录下的 logs（打包后即 exe 同级）。"""
+    """默认存储目录：系统的用户数据目录。
+
+    不能放程序旁边——打包后程序常装在 /Applications、Program Files 这类
+    只读位置，写不进去；macOS 上更是会写进 .app 包体内部，破坏签名，
+    而且替换程序时历史连图片一起没了。
+
+    开发态和打包态用同一个位置，省得"开发时好好的，打包就出事"。
+    """
+    home = Path.home()
+    if sys.platform == "darwin":
+        base = home / "Library" / "Application Support" / APP_DIR_NAME
+    elif sys.platform == "win32":
+        local = os.environ.get("LOCALAPPDATA")
+        base = (Path(local) if local else home / "AppData" / "Local") / APP_DIR_NAME
+    else:
+        xdg = os.environ.get("XDG_DATA_HOME")
+        base = (Path(xdg) if xdg else home / ".local" / "share") / "print-bridge"
+    return str(base)
+
+
+def legacy_dir():
+    """老版本的位置：程序所在目录下的 logs。只用于一次性迁移。"""
     if getattr(sys, "frozen", False):
         base = Path(sys.executable).resolve().parent
     else:
         base = Path(__file__).resolve().parent
     return str(base / "logs")
+
+
+def migrate_legacy(target=None):
+    """把老位置的历史搬到新位置。返回搬过去的路径，没搬返回 None。
+
+    只在新位置还没有数据时搬，绝不覆盖；搬不动（没权限之类）就当没发生，
+    大不了从空历史开始，不该为这个拦住程序启动。
+    """
+    source = Path(legacy_dir())
+    destination = Path(target or default_dir())
+    if not source.exists() or source.resolve() == destination.resolve():
+        return None
+    if not (source / HISTORY_FILE).exists() and not (source / IMAGE_DIR).exists():
+        return None                      # 老目录是空的，没什么可搬
+    if (destination / HISTORY_FILE).exists():
+        return None                      # 新位置已经有数据了，别覆盖
+
+    try:
+        destination.mkdir(parents=True, exist_ok=True)
+        for item in source.iterdir():
+            shutil.move(str(item), str(destination / item.name))
+        source.rmdir()                   # 搬空了才删得掉，删不掉说明还有别的东西，留着
+    except OSError:
+        return None
+    return str(destination)
 
 
 def sniff(data):

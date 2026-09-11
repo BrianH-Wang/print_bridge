@@ -20,7 +20,7 @@ from data_receiver import (
     broadcast, channel_for_key, expire_pending_acks, init_history, new_message_id,
     pending_ack_snapshot,
 )
-from history_store import HistoryStore, default_dir
+from history_store import HistoryStore, default_dir, migrate_legacy
 from logger import print_log, shorten
 from mapping import build_outbound
 from pairing import expire_pairs
@@ -40,7 +40,14 @@ class HistoryPanel(QWidget):
     def __init__(self, settings, parent=None):
         super().__init__(parent)
         self.settings = settings
-        self.store = HistoryStore(settings.value("history_dir") or default_dir())
+        # 用户自己指定过就听他的；没指定才用默认位置，并把老版本留在
+        # 程序目录下的历史搬过来——不然升级一次历史就"凭空消失"
+        chosen = settings.value("history_dir")
+        if not chosen:
+            moved = migrate_legacy()
+            if moved:
+                print_log(f"📦 历史记录已从程序目录迁移到 {moved}")
+        self.store = HistoryStore(chosen or default_dir())
 
         self.history_queue = queue.Queue()
         init_history(self.history_queue)
@@ -145,7 +152,9 @@ class HistoryPanel(QWidget):
         # 实时把列模式交给 _update_resize_modes 控制
         box.addWidget(self.history_table)
 
-        self._update_history_summary()
+        # 把上次的历史读回来。以前这里只调 _update_history_summary()，
+        # 结果磁盘上明明有记录、界面每次启动都是空的。
+        self._load_history()
 
         # 历史和 ack 都靠轮询落地，跟日志一个节奏
         self._timer = QTimer(self)

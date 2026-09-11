@@ -122,6 +122,37 @@ def get_desktop_path():
     return os.path.join(os.path.expanduser("~"), "Desktop")
 
 
+def _printers_via_lpstat():
+    """没有 pycups 时退而用 CUPS 的命令行工具枚举。
+
+    打印本身走的就是 `lp -d`（见 print_pdf_file），装了 CUPS 就有 lpstat，
+    所以这条兜底路几乎总是通的。没有它的话，pycups 装失败就等于
+    列不出队列 → 下拉是空的 → 启动校验直接拦下，明明 lp 能打却用不了。
+    """
+    printers, default_printer = [], None
+    try:
+        listed = subprocess.run(["lpstat", "-p"], capture_output=True,
+                                text=True, timeout=10)
+        for line in listed.stdout.splitlines():
+            # "printer HP_LaserJet is idle.  enabled since ..."
+            parts = line.split()
+            if len(parts) >= 2 and parts[0] == "printer":
+                printers.append(parts[1])
+    except (OSError, subprocess.SubprocessError):
+        return [], None
+
+    try:
+        shown = subprocess.run(["lpstat", "-d"], capture_output=True,
+                               text=True, timeout=10)
+        # "system default destination: HP_LaserJet"，没有默认时是另一句话
+        _, sep, name = shown.stdout.partition(":")
+        if sep and name.strip():
+            default_printer = name.strip()
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return printers, default_printer
+
+
 def get_available_printers():
     system = platform.system()
     printers, default_printer = [], None
@@ -132,10 +163,21 @@ def get_available_printers():
             printers = [p[2] for p in win32print.EnumPrinters(flags)]
             default_printer = win32print.GetDefaultPrinter()
         elif system in ("Darwin", "Linux"):
-            import cups
-            conn = cups.Connection()
-            printers = list(conn.getPrinters().keys())
-            default_printer = conn.getDefault()
+            try:
+                import cups
+            except ImportError:
+                printers, default_printer = _printers_via_lpstat()
+                if printers:
+                    print_log(f"ℹ️ 未安装 pycups，已改用 lpstat 枚举到 {len(printers)} 台打印机")
+                else:
+                    print_log("⚠️ 未安装 pycups，lpstat 也没找到打印机；"
+                              "系统打印将不可用（网络直连 IP:9100 不受影响）")
+            else:
+                conn = cups.Connection()
+                printers = list(conn.getPrinters().keys())
+                # getDefault() 给的是**用户**的默认打印机，没单独设过就是 None；
+                # 系统默认要问 lpstat -d。不补这一下，界面上就不会预选任何一台。
+                default_printer = conn.getDefault() or _printers_via_lpstat()[1]
     except Exception as e:
         print_log(f"⚠️ 获取打印机失败: {e}")
     return sorted(printers), default_printer
