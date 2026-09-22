@@ -9,6 +9,8 @@
 #       -> dist/print_bridge/print_bridge        (onedir)
 #
 # macOS 上 v7 已经禁止 onefile + windowed;Windows / Linux 用 onedir 也更稳。
+import os
+import shutil
 import sys
 from PyInstaller.utils.hooks import collect_submodules
 
@@ -63,6 +65,16 @@ coll = COLLECT(
     upx_exclude=[],
     name='print_bridge',
 )
+
+# 现成的配置文件（configs/*.json）放在可执行文件旁边，让人能直接看到、直接导入。
+# 不走 datas：那会被埋进 _internal/ 或 .app 里，使用者找不到。
+# macOS 的 DMG 由 scripts/make_dmg.sh 把同一个目录拷到 .app 旁边。
+_configs_src = os.path.join(SPECPATH, 'configs')
+_configs_dst = os.path.join(DISTPATH, 'print_bridge', 'configs')
+if os.path.isdir(_configs_src):
+    shutil.rmtree(_configs_dst, ignore_errors=True)
+    shutil.copytree(_configs_src, _configs_dst,
+                    ignore=shutil.ignore_patterns('.DS_Store', '__pycache__'))
 
 # macOS 把整个 dist/print_bridge 包成 .app
 if sys.platform == 'darwin':

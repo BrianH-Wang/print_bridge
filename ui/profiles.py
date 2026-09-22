@@ -9,7 +9,7 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 
-from config_io import build_export, dumps, parse_import
+from config_io import build_export, bundled_configs_dir, dumps, parse_import
 from logger import print_log
 from printer_utils import (
     DEFAULT_PRINTER_KEY, SYSTEM_PRINTER, get_available_printers, make_printer,
@@ -306,8 +306,11 @@ class ProfileMixin:
         QMessageBox.information(self, "导出配置", f"已导出到\n{path}")
 
     def import_profile(self):
+        # 随程序发出去的现成配置在 configs/ 里，对话框直接打开到那，少翻一层
+        start_dir = bundled_configs_dir()
         path, _ = QFileDialog.getOpenFileName(
-            self, "导入配置", "", "配置文件 (*.json);;所有文件 (*)"
+            self, "导入配置", str(start_dir) if start_dir else "",
+            "配置文件 (*.json);;所有文件 (*)",
         )
         if not path:
             return

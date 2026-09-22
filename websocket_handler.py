@@ -8,7 +8,7 @@ import websockets
 from data_receiver import (
     record_ack, record_reply, register_websocket, unregister_websocket,
 )
-from logger import print_log
+from logger import print_log, shorten
 from printer_utils import describe_printer, print_job
 
 
@@ -63,11 +63,22 @@ def _handle_text_message(websocket, data, ack_callback):
         if not msg_id:
             print_log("⚠️ external_reply 消息缺少 id")
             return None
-        accepted, acked, total, done = record_reply(websocket, msg_id, data.get("data"))
+        reply = data.get("data")
+        if reply is None:
+            # 前端没把结果放进 data：常见是直接铺在顶层，兜底把 type/id 之外的字段当回复
+            rest = {k: v for k, v in data.items() if k not in ("type", "id", "data")}
+            if rest:
+                reply = rest
+                print_log(f"⚠️ external_reply 缺少 data 字段，已把顶层其余字段当作回复 id={msg_id}")
+            else:
+                print_log(f"⚠️ external_reply 的 data 为空，原始消息: "
+                          f"{json.dumps(shorten(data), ensure_ascii=False)}")
+        shown = json.dumps(shorten(reply), ensure_ascii=False)
+        accepted, acked, total, done = record_reply(websocket, msg_id, reply)
         if not accepted:
-            print_log(f"⚠️ 回复到得太晚或重复，已忽略 id={msg_id}")
+            print_log(f"⚠️ 回复到得太晚或重复，已忽略 id={msg_id}: {shown}")
             return None
-        print_log(f"↩️ 收到前端回复 id={msg_id}")
+        print_log(f"↩️ 收到前端回复 id={msg_id}: {shown}")
         if ack_callback is not None and total:
             ack_callback(msg_id, acked, total, done)
         return None

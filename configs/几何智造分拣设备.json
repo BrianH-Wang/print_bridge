@@ -1,6 +1,6 @@
 {
   "print-bridge-config": 1,
-  "exported_at": "2026-09-10 18:53:56",
+  "exported_at": "2026-09-22 11:38:39",
   "note": "两条链接：/callback 收数值（双向，等前端回分拣格口）、/upload 收图片（单向）。按条码配对合成一条，应答已按设备文档改成 success/code/msg/data。",
   "profile": {
     "name": "分拣设备",
@@ -61,7 +61,7 @@
             },
             {
               "source": "weight",
-              "target": "weightKg",
+              "target": "weight",
               "transforms": [
                 "number"
               ],
@@ -70,7 +70,7 @@
             },
             {
               "source": "length",
-              "target": "lengthCm",
+              "target": "length",
               "transforms": [
                 "number"
               ],
@@ -79,7 +79,7 @@
             },
             {
               "source": "width",
-              "target": "widthCm",
+              "target": "width",
               "transforms": [
                 "number"
               ],
@@ -88,7 +88,7 @@
             },
             {
               "source": "height",
-              "target": "heightCm",
+              "target": "height",
               "transforms": [
                 "number"
               ],
@@ -115,6 +115,12 @@
           "keep": 60.0,
           "on_missing": "send_partial",
           "max_pending": 200
+        },
+        "reply_sample": {
+          "route": "A",
+          "totalCount": 100,
+          "currentCount": 1,
+          "mainOrderNo": "MO2026083100123"
         }
       },
       {
@@ -171,7 +177,8 @@
           "keep": 60.0,
           "on_missing": "send_partial",
           "max_pending": 200
-        }
+        },
+        "reply_sample": null
       }
     ]
   },

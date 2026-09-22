@@ -25,11 +25,16 @@ cp -R "$APP" "$STAGE/"
 # 2. 拖一个 /Applications 软链接到 DMG 窗口里,方便用户拖拽
 ln -s /Applications "$STAGE/Applications"
 
-# 3. 用 UDRW(可读写)先建一个 dmg
+# 3. 现成的配置文件和 .app 并排放,装完直接「导入」
+if [[ -d configs ]]; then
+  rsync -a --exclude .DS_Store configs/ "$STAGE/configs/"
+fi
+
+# 4. 用 UDRW(可读写)先建一个 dmg
 TMP_DMG="$(mktemp -d)/stage.dmg"
 hdiutil create -ov -volname "Print Bridge" -fs HFS+ -srcfolder "$STAGE" "$TMP_DMG"
 
-# 4. 转成只读压缩版(UDBZ 压缩高,UDZO 兼容性好,默认 UDZO)
+# 5. 转成只读压缩版(UDBZ 压缩高,UDZO 兼容性好,默认 UDZO)
 rm -f "$DMG"
 hdiutil convert "$TMP_DMG" -format UDZO -o "$DMG"
 

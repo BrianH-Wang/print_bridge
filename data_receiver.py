@@ -11,7 +11,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from channels import (
     ANY_PATH, CONCURRENT, DEFAULT_REPLY_TIMEOUT, MAX_BODY_BYTES, ONEWAY,
     RESPONSE_DEFAULTS, RESPONSE_LABELS, SERIAL, TWOWAY,
-    build_body, describe_channel, http_status_for, make_channel, route,
+    build_body, describe_channel, http_status_for, make_channel, resolve_response, route,
 )
 from logger import print_log, shorten
 from mapping import build_outbound, map_fields
@@ -176,21 +176,10 @@ def configure_responses(mapping):
 
 
 def response_for(key, channel=None, **fmt):
-    """取某个场景的 (状态码, 文案)。
-
-    三层叠加：通道自己的覆盖 > 全局应答表 > 出厂默认。
-    占位符缺参数时原样返回，不让打印链路因为文案报错。
-    """
-    entry = dict(RESPONSE_DEFAULTS[key])
+    """取某个场景的 (状态码, 文案)：通道覆盖 > 全局应答表 > 出厂默认。"""
     with _responses_lock:
-        entry.update(_responses.get(key) or {})
-    entry.update(((channel or {}).get("responses") or {}).get(key) or {})
-
-    try:
-        message = entry["message"].format(**fmt)
-    except (KeyError, IndexError, ValueError):
-        message = entry["message"]
-    return int(entry["code"]), message
+        overrides = {k: dict(v) for k, v in _responses.items()}
+    return resolve_response(key, channel, overrides, **fmt)
 
 
 def _record_history(data, forwarded, msg_id=None, channel=None):
@@ -398,9 +387,14 @@ def expire_pending_acks():
 # HTTP 服务
 # --------------------------------------------------------------------------- #
 
+# 自测发来的请求带这个头：照常走完整条链路，但不进接收历史、日志上打 🧪 标记
+SELFTEST_HEADER = "X-Print-Bridge-Selftest"
+
+
 class _CallbackHandler(BaseHTTPRequestHandler):
     server_version = "PrintAppServer/1.0"
     protocol_version = "HTTP/1.1"
+    selftest = False
 
     def log_message(self, fmt, *args):
         pass  # 默认实现会写 stderr，这里交由业务日志统一输出
@@ -435,6 +429,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         })
 
     def do_POST(self):
+        self.selftest = self.headers.get(SELFTEST_HEADER) == "1"
         # 先定通道：应答外壳、超时、单双向全看它，连报错都要按它的形状回
         channel = channel_for(self.path)
         if channel is None:
@@ -461,7 +456,8 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             return
 
         # 日志里折叠超长字段，转发给前端的仍是完整数据
-        print_log(f"📥 [{channel['key']}] 接收数据: {shorten(data)}")
+        tag = "🧪 " if self.selftest else ""
+        print_log(f"{tag}📥 [{channel['key']}] 接收数据: {shorten(data)}")
 
         # 设备最多等这么久：单发模式下排队和等回复共用这一份预算，
         # 不会因为前面排了几条就把设备晾成 2 倍、3 倍超时。
@@ -512,7 +508,8 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         total = store_attach(pair["group"], str(key), channel["key"], mapped,
                              pair["keep"], pair["max_pending"])
         print_log(f"🧩 [{channel['key']}] 已暂存待配对 {pair['field']}={key}（暂存区 {total} 条）")
-        _record_history(data, 0, None, channel["key"])
+        if not self.selftest:
+            _record_history(data, 0, None, channel["key"])
         self._reply("ok", extra={"forwarded": 0}, channel=channel)
 
     def _collect_pair(self, channel, mapped, deadline):
@@ -598,7 +595,8 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         else:
             print_log("⚠️ 无 WebSocket 客户端连接，数据未转发")
 
-        _record_history(data, sent, msg_id, channel["key"])
+        if not self.selftest:
+            _record_history(data, sent, msg_id, channel["key"])
 
         if not twoway:
             self._reply("ok", extra={"forwarded": sent}, channel=channel)
@@ -620,11 +618,11 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             return
 
         reply = entry["reply"] if entry else None
-        print_log(f"↩️ 前端回复 {entry['from'] if entry else '?'}: {shorten(reply)}")
+        print_log(f"✅ 用前端 {entry['from'] if entry else '?'} 的回复答复设备: {msg_id}")
         self._reply("ok_reply", extra={"forwarded": sent, "data": reply}, channel=channel)
 
 
-def _parse_addr(addr):
+def parse_addr(addr):
     """把 'http://localhost:13213/callback' 之类的地址解析成 (host, port)。"""
     addr = addr.strip()
     for prefix in ("http://", "https://"):
@@ -641,7 +639,7 @@ def start_http_server(addr, ready_event=None):
     """阻塞运行 HTTP 服务，直到 stop_http_server() 被调用。"""
     global _httpd
     try:
-        host, port = _parse_addr(addr)
+        host, port = parse_addr(addr)
         httpd = ThreadingHTTPServer((host, port), _CallbackHandler)
     except Exception as e:
         print_log(f"❌ 无法启动 HTTP 服务: {e}")

@@ -95,7 +95,8 @@ def normalize_path(path):
 def make_channel(key=DEFAULT_CHANNEL_KEY, label="", path=ANY_PATH, flow=ONEWAY,
                  timeout=DEFAULT_REPLY_TIMEOUT, dispatch=CONCURRENT,
                  envelope=None, http_status=FOLLOW_CODE, responses=None,
-                 mapping=None, outbound=None, sample=None, pair=None):
+                 mapping=None, outbound=None, sample=None, pair=None,
+                 reply_sample=None):
     """一条接收通道的完整描述。
 
     key       英文标识，日志和历史里用它区分是哪条链接来的
@@ -107,6 +108,8 @@ def make_channel(key=DEFAULT_CHANNEL_KEY, label="", path=ANY_PATH, flow=ONEWAY,
     outbound  发给前端的报文形状；None = 标准形状
     sample    设备发来的一条样例，只用于界面上的实时预览，不参与运行时
     pair      在配对合流里的角色；None = 不参与（见 pairing.py）
+    reply_sample  前端会回的一条样例（双向才有意义），自测时内置假前端照它回；
+                  跟着方案导出，换台机器也能一键自测
 
     mapping / outbound 这里只原样收着不做规整：规整逻辑在 mapping.py，
     而 mapping.py 要 import 本模块的 render_template，反过来 import 会成环。
@@ -127,6 +130,7 @@ def make_channel(key=DEFAULT_CHANNEL_KEY, label="", path=ANY_PATH, flow=ONEWAY,
         "outbound": outbound if isinstance(outbound, dict) and outbound else None,
         "sample": sample if isinstance(sample, dict) and sample else None,
         "pair": pair if isinstance(pair, dict) and pair else None,
+        "reply_sample": reply_sample if isinstance(reply_sample, dict) and reply_sample else None,
     }
 
 
@@ -290,6 +294,24 @@ def build_body(channel, scene, code, message, extra=None):
         "__channel": (channel or {}).get("key", ""),
     }
     return render_template(envelope, variables)
+
+
+def resolve_response(key, channel=None, overrides=None, **fmt):
+    """取某个场景的 (状态码, 文案)。
+
+    三层叠加：通道自己的覆盖 > 全局应答表（overrides）> 出厂默认。
+    占位符缺参数时原样返回，不让打印链路因为文案报错。
+    运行时由 data_receiver 传入它保存的全局表；自测算预期值时传配置文件里那份。
+    """
+    entry = dict(RESPONSE_DEFAULTS[key])
+    entry.update((overrides or {}).get(key) or {})
+    entry.update(((channel or {}).get("responses") or {}).get(key) or {})
+
+    try:
+        message = entry["message"].format(**fmt)
+    except (KeyError, IndexError, ValueError):
+        message = entry["message"]
+    return int(entry["code"]), message
 
 
 def http_status_for(channel, code):

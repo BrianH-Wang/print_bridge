@@ -53,6 +53,8 @@ class ChannelDialog(QDialog):
         # 按通道覆盖应答码这一项还没做进界面（一期用全局那张表就够）。
         # 原样带着走，免得编辑一次通道就把手改进 json 的覆盖悄悄抹掉。
         self._responses = current.get("responses") or {}
+        # 自测用的前端回复样例同理：界面还没给它留输入框，编辑时原样带着
+        self._reply_sample = current.get("reply_sample")
 
         box = QVBoxLayout(self)
         tabs = QTabWidget()
@@ -568,9 +570,11 @@ class ChannelDialog(QDialog):
         preset_box.setContentsMargins(0, 0, 0, 0)
         preset_box.setSpacing(6)
         self.preset_combo = QComboBox()
-        self.preset_combo.addItem("选一个常用形状", None)
+        self.preset_combo.addItem("自定义（不用预设）", None)
         for text, template in ENVELOPE_PRESETS:
             self.preset_combo.addItem(text, template)
+        # 打开时已存的模板正好是某个预设，就让下拉停在它上面
+        self.preset_combo.setCurrentIndex(self._preset_index_of(current.get("envelope")))
         self.preset_combo.currentIndexChanged.connect(self._apply_preset)
         preset_box.addWidget(self.preset_combo, 1)
         box.addWidget(preset_row)
@@ -583,6 +587,7 @@ class ChannelDialog(QDialog):
             )
         self.envelope_edit.setFixedHeight(150)
         self.envelope_edit.textChanged.connect(self._refresh_preview)
+        self.envelope_edit.textChanged.connect(self._sync_preset_combo)
         box.addWidget(self.envelope_edit)
 
         variables = "　".join(f"{{{{{name}}}}}" for name in ENVELOPE_VARIABLES)
@@ -605,16 +610,33 @@ class ChannelDialog(QDialog):
         box.addStretch()
         return page
 
+    def _preset_index_of(self, template):
+        """模板和哪个预设一模一样就返回它的下标；都不是返回 0（自定义）。"""
+        if template is not None:
+            for i in range(1, self.preset_combo.count()):
+                if self.preset_combo.itemData(i) == template:
+                    return i
+        return 0
+
     def _apply_preset(self, index):
         template = self.preset_combo.itemData(index)
         if template is None:
             return
         self.envelope_check.setChecked(True)
+        # 写入文本会触发 _sync_preset_combo，内容和预设一致所以下拉保持选中
         self.envelope_edit.setPlainText(json.dumps(template, ensure_ascii=False, indent=2))
-        # 选完就弹回提示项，免得下拉一直显示着某个预设、看着像是"当前用的是它"
-        self.preset_combo.blockSignals(True)
-        self.preset_combo.setCurrentIndex(0)
-        self.preset_combo.blockSignals(False)
+
+    def _sync_preset_combo(self):
+        """手改了模板之后，下拉要如实反映：还等于某个预设就停在它上面，否则回到自定义。"""
+        try:
+            template = json.loads(self.envelope_edit.toPlainText())
+        except ValueError:
+            template = None
+        index = self._preset_index_of(template)
+        if index != self.preset_combo.currentIndex():
+            self.preset_combo.blockSignals(True)
+            self.preset_combo.setCurrentIndex(index)
+            self.preset_combo.blockSignals(False)
 
     def _on_envelope_toggled(self):
         on = self.envelope_check.isChecked()
@@ -737,4 +759,5 @@ class ChannelDialog(QDialog):
             # 不用再去翻设备文档重新粘一遍
             sample=sample,
             pair=pair,
+            reply_sample=self._reply_sample,
         )

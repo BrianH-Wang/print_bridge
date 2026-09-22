@@ -8,10 +8,12 @@
 """
 
 import json
+import sys
 from datetime import datetime
+from pathlib import Path
 
 from channels import ANY_PATH, ONEWAY, TWOWAY, make_channel
-from mapping import PICK, make_mapping
+from mapping import PICK, make_mapping, make_outbound
 from pairing import ATTACH, PRIMARY, make_pair
 from printer_utils import make_printer
 
@@ -22,6 +24,31 @@ VERSION = 1
 # 也不含日志目录这类跟本机绑死的设置。
 PROFILE_KEYS = ("ws_port", "data_addr", "enable_print", "enable_data",
                 "printers", "channels")
+
+
+CONFIGS_DIR_NAME = "configs"
+
+
+def bundled_configs_dir():
+    """随程序一起发出去的现成配置文件夹（configs/）；找不到返回 None。
+
+    开发态就是仓库根目录下的 configs/；打包后放在可执行文件旁边
+    （Windows / Linux 的 dist/print_bridge/configs），macOS 是 .app 旁边
+    （DMG 里和 .app 并排）。
+    """
+    if getattr(sys, "frozen", False):
+        exe = Path(sys.executable).resolve()
+        candidates = [
+            exe.parent,                      # Windows / Linux：exe 所在目录
+            exe.parent.parent.parent.parent, # macOS：Print Bridge.app/Contents/MacOS 往上到 .app 旁边
+        ]
+    else:
+        candidates = [Path(__file__).resolve().parent]
+    for base in candidates:
+        folder = base / CONFIGS_DIR_NAME
+        if folder.is_dir():
+            return folder
+    return None
 
 
 def build_export(profile, http_responses=None, note=""):
@@ -84,6 +111,40 @@ def parse_import(text):
     return profile, (responses if isinstance(responses, dict) else {}), []
 
 
+def load_channels(profile):
+    """把方案里的通道规整成 make_channel 的形状，给不起界面的地方用（自测命令行）。
+
+    界面走的是 ui.helpers.sanitize_channels，它多做了 key 校验、超时钳位、
+    路径撞车这些针对"人手填"的检查；配置文件是程序导出的，形状本来就对，
+    这里只补默认值。
+    """
+    channels = []
+    for entry in profile.get("channels") or []:
+        if not isinstance(entry, dict) or not entry.get("key"):
+            continue
+        mapping = entry.get("mapping")
+        outbound = entry.get("outbound")
+        pair = entry.get("pair")
+        channels.append(make_channel(
+            key=entry["key"], label=entry.get("label"), path=entry.get("path"),
+            flow=entry.get("flow"), timeout=entry.get("timeout"), dispatch=entry.get("dispatch"),
+            envelope=entry.get("envelope"), http_status=entry.get("http_status"),
+            responses=entry.get("responses"),
+            mapping=make_mapping(mapping.get("mode"), mapping.get("fields"),
+                                 mapping.get("on_missing")) if isinstance(mapping, dict) else None,
+            outbound=make_outbound(outbound.get("envelope"), outbound.get("type"),
+                                   outbound.get("extra"), outbound.get("template"))
+            if isinstance(outbound, dict) else None,
+            sample=entry.get("sample"),
+            pair=make_pair(**{k: v for k, v in pair.items()
+                              if k in ("role", "group", "field", "value", "rename", "wait",
+                                       "keep", "on_missing", "max_pending")})
+            if isinstance(pair, dict) else None,
+            reply_sample=entry.get("reply_sample"),
+        ))
+    return channels
+
+
 # --------------------------------------------------------------------------- #
 # 内置模板
 # --------------------------------------------------------------------------- #
@@ -126,10 +187,10 @@ def _sorter_profile():
                 flow=TWOWAY, timeout=15,
                 mapping=make_mapping(PICK, [
                     {"source": "code", "target": "expressNo", "required": True},
-                    {"source": "weight", "target": "weightKg", "transforms": ["number"]},
-                    {"source": "length", "target": "lengthCm", "transforms": ["number"]},
-                    {"source": "width", "target": "widthCm", "transforms": ["number"]},
-                    {"source": "height", "target": "heightCm", "transforms": ["number"]},
+                    {"source": "weight", "target": "weight", "transforms": ["number"]},
+                    {"source": "length", "target": "length", "transforms": ["number"]},
+                    {"source": "width", "target": "width", "transforms": ["number"]},
+                    {"source": "height", "target": "height", "transforms": ["number"]},
                 ]),
                 pair=make_pair(PRIMARY, "parcel", field="expressNo", wait=5),
                 envelope=_DEVICE_ENVELOPE,
@@ -140,6 +201,9 @@ def _sorter_profile():
                 },
                 sample={"code": "CCSL2026083100123", "weight": "12.50",
                         "height": "35.20", "width": "28.00", "length": "40.75"},
+                # 前端按设备文档 1.3.1 回的分拣结果，自测时假前端照这个回
+                reply_sample={"route": "A", "totalCount": 100, "currentCount": 1,
+                              "mainOrderNo": "MO2026083100123"},
             ),
             make_channel(
                 key="sorter_image", label="分拣图片", path="/upload",
