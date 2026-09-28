@@ -7,6 +7,9 @@ on:
     branches: [master]
     tags: ['v*']
 
+env:
+  PYTHONUTF8: "1"   # Windows 上 Python 默认 cp1252，中文文件名和输出都会炸
+
 jobs:
   build:
     name: build-${{ matrix.os }}
@@ -81,7 +84,7 @@ jobs:
       # macOS 只传 DMG(里面已经带了 .app、configs 和说明书),不再重复传 .app 目录
       - name: Upload artifact (Linux/Windows)
         if: runner.os != 'macOS'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}.zip
@@ -90,7 +93,7 @@ jobs:
 
       - name: Upload artifact (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v5
+        uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}
           path: dist/Print Bridge.dmg

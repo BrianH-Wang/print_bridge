@@ -14,6 +14,10 @@ from pathlib import Path
 
 import markdown
 
+# Windows 的控制台默认 cp1252，打印 ✓ 和中文标题会直接抛 UnicodeEncodeError 把打包搞挂
+if hasattr(sys.stdout, "reconfigure"):
+    sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+
 ROOT = Path(__file__).resolve().parent.parent
 MANUALS = ["使用说明.md", "User Guide.md", "高级配置说明.md", "Advanced Guide.md"]   # 互相链接，后缀在下面一起改成 .html
 
