@@ -141,6 +141,7 @@ def load_channels(profile):
                                        "keep", "on_missing", "max_pending")})
             if isinstance(pair, dict) else None,
             reply_sample=entry.get("reply_sample"),
+            reply_raw=entry.get("reply_raw"),
         ))
     return channels
 
@@ -155,6 +156,36 @@ _DEVICE_ENVELOPE = {
     "msg": "{{__message}}",
     "data": "{{__data}}",
 }
+
+# 设备文档（docs/对接几何智造分拣设备文档.md）的错误码表：
+# 成功一律「操作成功」；请求不对归 404「服务器接口错误」；我们这边没接上、等不到归 500「服务器逻辑错误」。
+_INTERFACE_ERROR = {"code": 404, "message": "服务器接口错误"}
+_LOGIC_ERROR = {"code": 500, "message": "服务器逻辑错误"}
+_CALLBACK_RESPONSES = {
+    "ok": {"message": "操作成功"},
+    "ok_reply": {"message": "操作成功"},
+    "bad_json": _INTERFACE_ERROR,
+    "map_failed": _INTERFACE_ERROR,
+    "too_large": _INTERFACE_ERROR,
+    "no_client": _LOGIC_ERROR,
+    "reply_timeout": _LOGIC_ERROR,
+    "queue_timeout": _LOGIC_ERROR,
+    "pair_timeout": _LOGIC_ERROR,
+}
+# 上传接口多两档：413 文件过大、415 解析失败（文档 2.3.1）
+_UPLOAD_RESPONSES = {
+    "ok": {"message": "操作成功"},
+    "bad_json": _INTERFACE_ERROR,
+    "map_failed": _INTERFACE_ERROR,
+    "queue_timeout": _LOGIC_ERROR,
+    "too_large": {"code": 413, "message": "文件超过 2M 限制"},
+    "file_too_large": {"code": 413, "message": "文件超过 2M 限制"},
+    "file_invalid": {"code": 415, "message": "文件解析失败，请检查 base64 内容与文件格式"},
+}
+_UPLOAD_FILE_CHECK = {"type": "file", "max_bytes": 2 * 1024 * 1024, "formats": ["jpg", "png", "pdf"]}
+# 文档 2.4.1 里那张 1x1 PNG，样例和自测都用它
+_TINY_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
+             "+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==")
 
 
 def _blank_profile():
@@ -172,52 +203,75 @@ def _blank_profile():
     }
 
 
+def _sorter_data_channel(pair=None):
+    """几何智造的 /callback：条码 + 重量体积，双向，等前端回分拣格口。
+
+    设备文档 1.3 要求 data 里带 route，这个值只有前端算得出来，所以必须双向。
+    前端回复本身就是设备要的完整应答（success/code/msg/data），所以开 reply_raw 原样透传；
+    没人接、超时这些没有前端回复的场景仍按下面的外壳和应答表回。
+    有图片接口的方案把它设成配对主报文（pair），没有的就单独一条。
+    """
+    return make_channel(
+        key="sorter_data", label="分拣数值", path="/callback",
+        flow=TWOWAY, timeout=15,
+        # 前端回的已经是 success/code/msg/data 的完整应答，原样交给设备，不再套一层
+        reply_raw=True,
+        mapping=make_mapping(PICK, [
+            {"source": "code", "target": "expressNo", "required": True},
+            {"source": "weight", "target": "weight", "transforms": ["number"]},
+            {"source": "length", "target": "length", "transforms": ["number"]},
+            {"source": "width", "target": "width", "transforms": ["number"]},
+            {"source": "height", "target": "height", "transforms": ["number"]},
+        ]),
+        pair=pair,
+        envelope=_DEVICE_ENVELOPE,
+        responses=_CALLBACK_RESPONSES,
+        sample={"code": "CCSL2026083100123", "weight": "12.50",
+                "height": "35.20", "width": "28.00", "length": "40.75"},
+        # 前端按设备文档 1.3.1 回的分拣结果，自测时假前端照这个回
+        reply_sample={"route": "A", "totalCount": 100, "currentCount": 1,
+                      "mainOrderNo": "MO2026083100123"},
+    )
+
+
 def _sorter_profile():
     """几何智造分拣设备：图片 + 数值两条链接，按条码配对成一条。"""
     return {
-        "name": "分拣设备",
+        "name": "双向获取数据",
         "ws_port": "8765",
         "data_addr": "0.0.0.0:13213",
         "enable_print": False,
         "enable_data": True,
         "printers": [make_printer(key="label", label="标签")],
         "channels": [
-            make_channel(
-                key="sorter_data", label="分拣数值", path="/callback",
-                flow=TWOWAY, timeout=15,
-                mapping=make_mapping(PICK, [
-                    {"source": "code", "target": "expressNo", "required": True},
-                    {"source": "weight", "target": "weight", "transforms": ["number"]},
-                    {"source": "length", "target": "length", "transforms": ["number"]},
-                    {"source": "width", "target": "width", "transforms": ["number"]},
-                    {"source": "height", "target": "height", "transforms": ["number"]},
-                ]),
-                pair=make_pair(PRIMARY, "parcel", field="expressNo", wait=5),
-                envelope=_DEVICE_ENVELOPE,
-                responses={
-                    "bad_json": {"code": 404, "message": "服务器接口错误"},
-                    "reply_timeout": {"code": 500, "message": "服务器逻辑错误"},
-                    "no_client": {"code": 500, "message": "服务器逻辑错误"},
-                },
-                sample={"code": "CCSL2026083100123", "weight": "12.50",
-                        "height": "35.20", "width": "28.00", "length": "40.75"},
-                # 前端按设备文档 1.3.1 回的分拣结果，自测时假前端照这个回
-                reply_sample={"route": "A", "totalCount": 100, "currentCount": 1,
-                              "mainOrderNo": "MO2026083100123"},
-            ),
+            _sorter_data_channel(pair=make_pair(PRIMARY, "parcel", field="expressNo", wait=5)),
             make_channel(
                 key="sorter_image", label="分拣图片", path="/upload",
                 flow=ONEWAY,
                 mapping=make_mapping(PICK, [
                     {"source": "code", "target": "expressNo", "required": True},
-                    {"source": "file", "target": "imageBase64"},
+                    {"source": "file", "target": "imageBase64", "required": True,
+                     "check": _UPLOAD_FILE_CHECK},
                 ]),
                 pair=make_pair(ATTACH, "parcel", field="expressNo", keep=60),
                 envelope=_DEVICE_ENVELOPE,
-                responses={"ok": {"message": "操作成功"}},
-                sample={"code": "CCSL2026083100123", "file": "iVBORw0KGgo..."},
+                responses=_UPLOAD_RESPONSES,
+                sample={"code": "CCSL2026083100123", "file": _TINY_PNG},
             ),
         ],
+    }
+
+
+def _sorter_no_image_profile():
+    """几何智造分拣设备（无图片）：只有 /callback 一条，不配对，收到就推。"""
+    return {
+        "name": "双向获取数据（无图片）",
+        "ws_port": "8765",
+        "data_addr": "0.0.0.0:13213",
+        "enable_print": False,
+        "enable_data": True,
+        "printers": [make_printer(key="label", label="标签")],
+        "channels": [_sorter_data_channel()],
     }
 
 
@@ -226,8 +280,13 @@ TEMPLATES = [
     ("空白起步", "一条兜底通道：任何路径都收，原样转给前端。"
                 "适合从零开始，照着填自己的接口。", _blank_profile),
     ("几何智造分拣设备", "两条链接：/callback 收数值（双向，等前端回分拣格口）、"
-                        "/upload 收图片（单向）。按条码配对合成一条，"
-                        "应答已按设备文档改成 success/code/msg/data。", _sorter_profile),
+                        "/upload 收图片（单向）。按条码配对合成一条。"
+                        "应答按设备文档：success/code/msg/data，错误码 404/500，"
+                        "图片超 2M 回 413、解不开回 415。", _sorter_profile),
+    ("几何智造分拣设备（无图片）", "只有 /callback 一条（双向，等前端回分拣格口），不配对、收到就推。"
+                                "应答按设备文档：success/code/msg/data，错误码 404/500。"
+                                "设备不传图或前端不要图时用这份。",
+     _sorter_no_image_profile),
 ]
 
 

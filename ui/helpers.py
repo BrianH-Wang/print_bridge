@@ -193,6 +193,7 @@ def sanitize_channels(item):
                 sample=entry.get("sample"),
                 pair=sanitize_pair(entry.get("pair")),
                 reply_sample=entry.get("reply_sample"),
+                reply_raw=entry.get("reply_raw"),
             ))
         if channels:
             return channels[:MAX_CHANNELS]

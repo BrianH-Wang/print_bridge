@@ -240,6 +240,19 @@ QTableWidget#history::item:selected {{
     background: {table_sel_bg};
     color: {table_sel_fg};
 }}
+QTreeWidget#selftest {{
+    background: {surface};
+    alternate-background-color: {table_alt};
+    color: {text};
+    border: 1px solid {border};
+    border-radius: 8px;
+    font-size: 12px;
+}}
+QTreeWidget#selftest::item {{ padding: 3px 4px; }}
+QTreeWidget#selftest::item:selected {{
+    background: {table_sel_bg};
+    color: {table_sel_fg};
+}}
 QHeaderView::section {{
     background: {table_header_bg};
     color: {muted};

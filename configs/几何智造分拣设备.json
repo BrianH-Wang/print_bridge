@@ -1,9 +1,9 @@
 {
   "print-bridge-config": 1,
-  "exported_at": "2026-09-22 11:38:39",
-  "note": "两条链接：/callback 收数值（双向，等前端回分拣格口）、/upload 收图片（单向）。按条码配对合成一条，应答已按设备文档改成 success/code/msg/data。",
+  "exported_at": "2026-09-28 17:30:07",
+  "note": "两条链接：/callback 收数值（双向，等前端回分拣格口）、/upload 收图片（单向）。按条码配对合成一条。应答按设备文档：success/code/msg/data，错误码 404/500，图片超 2M 回 413、解不开回 415。",
   "profile": {
-    "name": "分拣设备",
+    "name": "双向获取数据",
     "ws_port": "8765",
     "data_addr": "0.0.0.0:13213",
     "enable_print": false,
@@ -35,15 +35,37 @@
         },
         "http_status": "follow_code",
         "responses": {
+          "ok": {
+            "message": "操作成功"
+          },
+          "ok_reply": {
+            "message": "操作成功"
+          },
           "bad_json": {
             "code": 404,
             "message": "服务器接口错误"
+          },
+          "map_failed": {
+            "code": 404,
+            "message": "服务器接口错误"
+          },
+          "too_large": {
+            "code": 404,
+            "message": "服务器接口错误"
+          },
+          "no_client": {
+            "code": 500,
+            "message": "服务器逻辑错误"
           },
           "reply_timeout": {
             "code": 500,
             "message": "服务器逻辑错误"
           },
-          "no_client": {
+          "queue_timeout": {
+            "code": 500,
+            "message": "服务器逻辑错误"
+          },
+          "pair_timeout": {
             "code": 500,
             "message": "服务器逻辑错误"
           }
@@ -57,7 +79,8 @@
               "target": "expressNo",
               "transforms": [],
               "required": true,
-              "default": null
+              "default": null,
+              "check": null
             },
             {
               "source": "weight",
@@ -66,7 +89,8 @@
                 "number"
               ],
               "required": false,
-              "default": null
+              "default": null,
+              "check": null
             },
             {
               "source": "length",
@@ -75,7 +99,8 @@
                 "number"
               ],
               "required": false,
-              "default": null
+              "default": null,
+              "check": null
             },
             {
               "source": "width",
@@ -84,7 +109,8 @@
                 "number"
               ],
               "required": false,
-              "default": null
+              "default": null,
+              "check": null
             },
             {
               "source": "height",
@@ -93,7 +119,8 @@
                 "number"
               ],
               "required": false,
-              "default": null
+              "default": null,
+              "check": null
             }
           ]
         },
@@ -121,7 +148,8 @@
           "totalCount": 100,
           "currentCount": 1,
           "mainOrderNo": "MO2026083100123"
-        }
+        },
+        "reply_raw": true
       },
       {
         "key": "sorter_image",
@@ -140,6 +168,30 @@
         "responses": {
           "ok": {
             "message": "操作成功"
+          },
+          "bad_json": {
+            "code": 404,
+            "message": "服务器接口错误"
+          },
+          "map_failed": {
+            "code": 404,
+            "message": "服务器接口错误"
+          },
+          "queue_timeout": {
+            "code": 500,
+            "message": "服务器逻辑错误"
+          },
+          "too_large": {
+            "code": 413,
+            "message": "文件超过 2M 限制"
+          },
+          "file_too_large": {
+            "code": 413,
+            "message": "文件超过 2M 限制"
+          },
+          "file_invalid": {
+            "code": 415,
+            "message": "文件解析失败，请检查 base64 内容与文件格式"
           }
         },
         "mapping": {
@@ -151,21 +203,31 @@
               "target": "expressNo",
               "transforms": [],
               "required": true,
-              "default": null
+              "default": null,
+              "check": null
             },
             {
               "source": "file",
               "target": "imageBase64",
               "transforms": [],
-              "required": false,
-              "default": null
+              "required": true,
+              "default": null,
+              "check": {
+                "type": "file",
+                "max_bytes": 2097152,
+                "formats": [
+                  "jpg",
+                  "png",
+                  "pdf"
+                ]
+              }
             }
           ]
         },
         "outbound": null,
         "sample": {
           "code": "CCSL2026083100123",
-          "file": "iVBORw0KGgo..."
+          "file": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
         },
         "pair": {
           "role": "attach",
@@ -178,7 +240,8 @@
           "on_missing": "send_partial",
           "max_pending": 200
         },
-        "reply_sample": null
+        "reply_sample": null,
+        "reply_raw": false
       }
     ]
   },

@@ -35,7 +35,7 @@ from channels import (
     resolve_response, validate_envelope,
 )
 from data_receiver import SELFTEST_HEADER, parse_addr
-from mapping import ON_ERROR, PASSTHROUGH, build_outbound, map_fields, validate_outbound
+from mapping import check_files, ON_ERROR, PASSTHROUGH, build_outbound, map_fields, validate_outbound
 from pairing import ATTACH, NONE, PRIMARY, attach_channels, pair_of, role_of
 from pairing import merge as merge_attaches
 
@@ -115,6 +115,14 @@ def lint(channels):
 
         if channel["flow"] == TWOWAY and role != ATTACH and not channel.get("reply_sample"):
             findings.append(_finding(WARN, channel, "双向通道没配回复样例，自测时假前端只能回一个占位对象"))
+
+        if isinstance(channel.get("sample"), dict):
+            bad = check_files(channel["sample"], channel.get("mapping"))
+            if bad:
+                findings.append(_finding(
+                    ERROR, channel,
+                    f"样例过不了文件校验（{bad[1]}），正常用例会被当成 {bad[0]} 拒掉。"
+                    "把样例里的文件换成一张真实的小图片"))
 
     # 配对组：主报文和附加数据要成对，样例里的配对键值也要对得上
     groups = {}
@@ -227,8 +235,11 @@ def plan(channels, negative=True, slow=False):
             for source in _required_top_level_sources(channel):
                 if isinstance(channel.get("sample"), dict) and source in channel["sample"]:
                     body = {k: v for k, v in channel["sample"].items() if k != source}
-                    cases.append(_case(MISSING, f"{channel['key']}：缺必填字段 {source}",
-                                       [_step(with_path(channel), body)], channel))
+                    case = _case(MISSING, f"{channel['key']}：缺必填字段 {source}",
+                                 [_step(with_path(channel), body)], channel)
+                    # 缺的是带文件校验的字段时，先被文件校验拦下，回的是「文件解析失败」而不是转译失败
+                    case["missing_source"] = source
+                    cases.append(case)
         if not any(c["path"] == ANY_PATH for c in channels):
             cases.append(_case(NO_ROUTE, "打一个没配过的路径", [_step(None, {"probe": 1})]))
 
@@ -521,7 +532,10 @@ def _run_case(case, ctx):
         elif kind == BAD_JSON:
             scene, fmt = "bad_json", {"_wild": True}
         elif kind == MISSING:
-            scene, fmt = "map_failed", {"_wild": True}
+            checked = {f.get("source") for f in ((step["channel"].get("mapping") or {}).get("fields") or [])
+                       if f.get("check")}
+            scene = "file_invalid" if case.get("missing_source") in checked else "map_failed"
+            fmt = {"_wild": True}
         else:
             scene, fmt = "no_route", {"path": step["path"]}
         status, body = _expected_reply(step["channel"], step, scene, http_responses, clients, reply, **fmt)

@@ -147,15 +147,77 @@ def apply_transforms(value, transforms):
 # 字段映射
 # --------------------------------------------------------------------------- #
 
-def make_field(source="", target="", transforms=None, required=False, default=""):
-    """一条字段映射：从 source 取值，改名成 target，中间过一遍 transforms。"""
+def make_field(source="", target="", transforms=None, required=False, default="",
+               check=None):
+    """一条字段映射：从 source 取值，改名成 target，中间过一遍 transforms。
+
+    check  可选的内容校验，目前只有文件一种：
+           {"type": "file", "max_bytes": 2097152, "formats": ["jpg", "png", "pdf"]}
+           校验在转译之前跑，不过就按 file_too_large / file_invalid 场景回设备。
+    """
     return {
         "source": str(source or "").strip(),
         "target": str(target or "").strip() or str(source or "").strip(),
         "transforms": [t for t in (transforms or []) if t],
         "required": bool(required),
         "default": default,
+        "check": make_check(check),
     }
+
+
+FILE_CHECK = "file"
+FILE_FORMATS = ("jpg", "png", "gif", "bmp", "webp", "pdf")   # sniff 认得的类型
+
+
+def make_check(raw):
+    """规整一条内容校验；不是认识的形状就当没配。"""
+    if not isinstance(raw, dict) or raw.get("type") != FILE_CHECK:
+        return None
+    try:
+        max_bytes = int(raw.get("max_bytes") or 0)
+    except (TypeError, ValueError):
+        max_bytes = 0
+    formats = [str(f).lower().lstrip(".") for f in (raw.get("formats") or []) if f]
+    formats = ["jpg" if f == "jpeg" else f for f in formats]
+    return {"type": FILE_CHECK, "max_bytes": max(0, max_bytes),
+            "formats": [f for f in formats if f in FILE_FORMATS]}
+
+
+def check_files(data, mapping):
+    """跑一遍字段上的文件校验。返回 (场景 key, 说明, 上限字节数)；全过返回 None。
+
+    设备文档通常把「文件过大」和「文件解析失败」分成两个错误码，
+    所以这里也分两个场景：file_too_large 和 file_invalid。
+    字段缺失、为空也算解析失败——文档里「file 为空」就归 415 那一档。
+    """
+    from history_store import sniff   # 纯函数，按文件头认类型；放这里 import 避免启动时绕一圈
+
+    for field in (mapping or {}).get("fields") or []:
+        check = field.get("check")
+        if not check or check.get("type") != FILE_CHECK:
+            continue
+        name = field.get("source", "")
+        value = get_path(data, name) if isinstance(data, dict) else MISSING
+        if value is MISSING or value in (None, ""):
+            return "file_invalid", f"{name} 为空", check["max_bytes"]
+        if not isinstance(value, str):
+            return "file_invalid", f"{name} 不是 base64 字符串", check["max_bytes"]
+        text = value.split(",", 1)[1] if value.startswith("data:") and "," in value else value
+        try:
+            raw = base64.b64decode(text, validate=True)
+        except (ValueError, TypeError):
+            return "file_invalid", f"{name} 不是合法的 base64", check["max_bytes"]
+        if not raw:
+            return "file_invalid", f"{name} 为空", check["max_bytes"]
+        if check["max_bytes"] and len(raw) > check["max_bytes"]:
+            return "file_too_large", f"{name} 解码后 {len(raw)} 字节", check["max_bytes"]
+        if check["formats"]:
+            _, ext = sniff(raw)
+            if ext not in check["formats"]:
+                return ("file_invalid",
+                        f"{name} 的格式不是 {'/'.join(check['formats'])}（识别为 {ext or '未知'}）",
+                        check["max_bytes"])
+    return None
 
 
 def make_mapping(mode=PASSTHROUGH, fields=None, on_missing=ON_ERROR):
@@ -164,7 +226,7 @@ def make_mapping(mode=PASSTHROUGH, fields=None, on_missing=ON_ERROR):
         "on_missing": on_missing if on_missing in (ON_ERROR, ON_SKIP, ON_DEFAULT) else ON_ERROR,
         "fields": [make_field(**f) if not isinstance(f, dict) else make_field(
             f.get("source"), f.get("target"), f.get("transforms"),
-            f.get("required"), f.get("default"),
+            f.get("required"), f.get("default"), f.get("check"),
         ) for f in (fields or []) if f],
     }
 

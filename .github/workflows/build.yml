@@ -46,7 +46,7 @@ jobs:
           # Linux/macOS 用 bash,Windows 这里 shell=bash 实际被 GHA 重定向成 Git Bash,
           # 在 PowerShell 阶段前不会执行;Windows 步骤写在下面。
           .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install pyinstaller PyQt6 websockets
+          .venv/bin/python -m pip install pyinstaller PyQt6 websockets markdown
           if [ "$RUNNER_OS" = "Linux" ] || [ "$RUNNER_OS" == "macOS" ]; then
             .venv/bin/python -m pip install pycups || true
           fi
@@ -58,7 +58,7 @@ jobs:
         shell: pwsh
         run: |
           .venv\Scripts\python.exe -m pip install --upgrade pip
-          .venv\Scripts\python.exe -m pip install pyinstaller PyQt6 websockets pywin32
+          .venv\Scripts\python.exe -m pip install pyinstaller PyQt6 websockets markdown pywin32
 
       - name: Build (Linux/Windows)
         if: runner.os != 'macOS'

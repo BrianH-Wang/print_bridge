@@ -48,6 +48,8 @@ RESPONSE_DEFAULTS = {
     "no_route":      {"code": 404, "message": "没有匹配该路径的通道：{path}"},
     "map_failed":    {"code": 400, "message": "字段转译失败：{error}"},
     "pair_timeout":  {"code": 504, "message": "等不到配对数据（{missing}），超时 {timeout}s"},
+    "file_too_large": {"code": 413, "message": "文件过大，解码后不能超过 {limit} 字节"},
+    "file_invalid":   {"code": 415, "message": "文件解析失败：{error}"},
 }
 
 # (场景 key, 场景名, 什么时候会返回, 可用占位符)，界面上照这个顺序列出来
@@ -62,6 +64,8 @@ RESPONSE_LABELS = [
     ("no_route",      "路径没有对应通道",   "POST 的路径没有匹配的通道，也没有兜底通道", "{path}"),
     ("map_failed",    "字段转译失败",       "必填字段缺失或转换算子出错，数据没有转发给前端", "{error}"),
     ("pair_timeout",  "配对超时",           "主报文在等待时间内没等到附加数据，且设了「回错误」", "{missing} {timeout}"),
+    ("file_too_large", "文件过大",          "字段映射里配了文件校验，base64 解码后超过上限", "{limit}"),
+    ("file_invalid",   "文件解析失败",      "配了文件校验的字段为空、不是合法 base64、或格式不在允许范围", "{error}"),
 ]
 
 
@@ -96,13 +100,15 @@ def make_channel(key=DEFAULT_CHANNEL_KEY, label="", path=ANY_PATH, flow=ONEWAY,
                  timeout=DEFAULT_REPLY_TIMEOUT, dispatch=CONCURRENT,
                  envelope=None, http_status=FOLLOW_CODE, responses=None,
                  mapping=None, outbound=None, sample=None, pair=None,
-                 reply_sample=None):
+                 reply_sample=None, reply_raw=False):
     """一条接收通道的完整描述。
 
     key       英文标识，日志和历史里用它区分是哪条链接来的
     label     中文备注，只给人看
     path      匹配的路径；ANY_PATH 表示兜底
     envelope  回给设备的 body 模板；None = 用内置形状（也就是今天的行为）
+    reply_raw 双向拿到前端回复时，body 就是前端回的那份内容本身、不套任何外壳；
+              其余场景（单向、没人接、超时、报错）照旧走 envelope / 内置形状
     responses 只放「和全局表不一样」的那几个场景，其余自动落回全局
     mapping   发给前端前的字段转译；None = 原样透传
     outbound  发给前端的报文形状；None = 标准形状
@@ -131,6 +137,7 @@ def make_channel(key=DEFAULT_CHANNEL_KEY, label="", path=ANY_PATH, flow=ONEWAY,
         "sample": sample if isinstance(sample, dict) and sample else None,
         "pair": pair if isinstance(pair, dict) and pair else None,
         "reply_sample": reply_sample if isinstance(reply_sample, dict) and reply_sample else None,
+        "reply_raw": bool(reply_raw),
     }
 
 
@@ -278,12 +285,20 @@ def legacy_body(code, message, extra):
 
 
 def build_body(channel, scene, code, message, extra=None):
-    """组装回给设备的 body。通道配了 envelope 就走模板，否则用内置形状。"""
-    envelope = (channel or {}).get("envelope")
+    """组装回给设备的 body。
+
+    优先级：reply_raw 且真拿到了前端回复 → 原样回前端那份；
+    否则通道配了 envelope 就走模板，再否则用内置形状。
+    """
+    extra = extra or {}
+    channel = channel or {}
+    if channel.get("reply_raw") and scene == "ok_reply" and extra.get("data") is not None:
+        return extra["data"]
+
+    envelope = channel.get("envelope")
     if not envelope:
         return legacy_body(code, message, extra)
 
-    extra = extra or {}
     variables = {
         "__success": code < 400,
         "__code": code,

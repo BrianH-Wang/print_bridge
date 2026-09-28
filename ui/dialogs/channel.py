@@ -53,8 +53,6 @@ class ChannelDialog(QDialog):
         # 按通道覆盖应答码这一项还没做进界面（一期用全局那张表就够）。
         # 原样带着走，免得编辑一次通道就把手改进 json 的覆盖悄悄抹掉。
         self._responses = current.get("responses") or {}
-        # 自测用的前端回复样例同理：界面还没给它留输入框，编辑时原样带着
-        self._reply_sample = current.get("reply_sample")
 
         box = QVBoxLayout(self)
         tabs = QTabWidget()
@@ -221,6 +219,10 @@ class ChannelDialog(QDialog):
         twoway = self.flow_combo.currentData() == TWOWAY
         self.timeout_input.setEnabled(twoway)
         self.timeout_hint.setText("秒" if twoway else "秒　·　单向不会等，这项不生效")
+        # 建页顺序是基础页在前，头一次触发时「发给前端」页还没建出来
+        if hasattr(self, "reply_edit"):
+            self.reply_edit.setEnabled(twoway)
+            self.reply_label.setEnabled(twoway)
         self._refresh_basic_summary()
 
     # ------------------------------------------------------------------ #
@@ -457,8 +459,33 @@ class ChannelDialog(QDialog):
         self.outbound_problem.setObjectName("hint")
         self.outbound_problem.setWordWrap(True)
         box.addWidget(self.outbound_problem)
+
+        # 反方向的样例：自测时没有真前端，内置假前端就照这个回。跟着方案导出，
+        # 换台机器也能一键自测。单向通道没有回复这回事，灰掉。
+        self.reply_label = QLabel("前端回复样例（双向通道，自测时假前端照这个回）:")
+        box.addWidget(self.reply_label)
+        self.reply_edit = QPlainTextEdit()
+        self.reply_edit.setPlaceholderText('{"route": "A"}')
+        if current.get("reply_sample"):
+            self.reply_edit.setPlainText(
+                json.dumps(current["reply_sample"], ensure_ascii=False, indent=2)
+            )
+        self.reply_edit.setFixedHeight(80)
+        box.addWidget(self.reply_edit)
         box.addStretch()
         return page
+
+    def _parse_reply_sample(self):
+        text = self.reply_edit.toPlainText().strip()
+        if not text:
+            return None, []
+        try:
+            value = json.loads(text)
+        except ValueError as e:
+            return None, [f"前端回复样例不是合法 JSON：{e}"]
+        if not isinstance(value, dict):
+            return None, ["前端回复样例最外层必须是一个 JSON 对象"]
+        return value, []
 
     def _on_outbound_changed(self):
         self.outbound_edit.setEnabled(self.outbound_check.isChecked())
@@ -559,6 +586,16 @@ class ChannelDialog(QDialog):
         )
         form.addRow("HTTP 状态码:", self.http_status_combo)
         box.addLayout(form)
+
+        self.reply_raw_check = QCheckBox("双向拿到前端回复时，把前端回的内容原样回给设备（不套外壳）")
+        self.reply_raw_check.setChecked(bool(current.get("reply_raw")))
+        self.reply_raw_check.setToolTip(
+            "勾上后设备收到的 body 就是前端 external_reply 里 data 的那份内容本身，\n"
+            "没有 success / code / msg 这层包装。\n"
+            "只影响「拿到前端回复」这一档；单向、没人接、超时、报错时仍按下面的外壳回。"
+        )
+        self.reply_raw_check.toggled.connect(self._refresh_preview)
+        box.addWidget(self.reply_raw_check)
 
         self.envelope_check = QCheckBox("自定义应答外壳（回给设备的 body 形状）")
         self.envelope_check.setChecked(bool(current.get("envelope")))
@@ -664,6 +701,7 @@ class ChannelDialog(QDialog):
         preview_channel = {
             "key": self.key_input.text().strip() or "channel",
             "envelope": template,
+            "reply_raw": self.reply_raw_check.isChecked(),
         }
         if problems:
             self.preview.setPlainText("")
@@ -672,9 +710,11 @@ class ChannelDialog(QDialog):
 
         body = build_body(preview_channel, scene, code, message, extra)
         self.preview.setPlainText(json.dumps(body, ensure_ascii=False, indent=2))
-        self.preview_problem.setText(
-            "" if template else "未自定义：用内置形状，和不配置时完全一样"
-        )
+        if preview_channel["reply_raw"]:
+            hint = "原样回前端的内容；出错场景仍按" + ("上面的外壳回" if template else "内置形状回")
+        else:
+            hint = "" if template else "未自定义：用内置形状，和不配置时完全一样"
+        self.preview_problem.setText(hint)
 
     # ------------------------------------------------------------------ #
 
@@ -720,6 +760,11 @@ class ChannelDialog(QDialog):
             QMessageBox.warning(self, "错误", "配对设置有问题：\n\n" + "\n".join(problems))
             return
 
+        _, problems = self._parse_reply_sample()
+        if problems:
+            QMessageBox.warning(self, "错误", "\n".join(problems))
+            return
+
         problems = self.mapping_page.problems()
         if problems:
             # 映射问题只按样例算出来，样例本身可能不全 —— 提醒但不拦，
@@ -759,5 +804,6 @@ class ChannelDialog(QDialog):
             # 不用再去翻设备文档重新粘一遍
             sample=sample,
             pair=pair,
-            reply_sample=self._reply_sample,
+            reply_sample=self._parse_reply_sample()[0],
+            reply_raw=self.reply_raw_check.isChecked(),
         )

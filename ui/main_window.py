@@ -3,7 +3,7 @@
 真正的功能都在旁边的模块里：
   ui/printer_list.py  打印机列表组件
   ui/channel_list.py  接收通道列表组件
-  ui/panels/          日志、接收历史两个页签
+  ui/panels/          日志、接收历史、自测三个页签
   ui/profiles.py      配置方案（mixin）
   ui/server_control.py 启停服务（mixin）
   ui/dialogs/         各种弹窗
@@ -25,10 +25,10 @@ from logger import print_log
 from printer_utils import DEFAULT_RAW_PORT, NETWORK_PRINTER, SYSTEM_PRINTER
 from theme import SYSTEM, THEME_CHOICES, apply_theme
 from ui.channel_list import ChannelListWidget
-from ui.constants import DATA_ADDR
+from ui.constants import LEGACY_PROFILE_NAMES, DATA_ADDR
 from ui.dialogs import HttpResponseDialog
 from ui.helpers import normalize_addr
-from ui.panels import HistoryPanel, LogPanel
+from ui.panels import HistoryPanel, LogPanel, SelftestPanel
 from ui.printer_list import PrinterListWidget
 from ui.profiles import ProfileMixin
 from ui.server_control import ServerMixin
@@ -53,6 +53,9 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.profiles = self._load_profiles()
         names = [p["name"] for p in self.profiles]
         self.default_profile = self.settings.value("default_profile")
+        if self.default_profile not in names:
+            # 方案刚被改过名（老的「默认」现在叫「单向获取数据」），跟着找过去
+            self.default_profile = LEGACY_PROFILE_NAMES.get(self.default_profile, names[0])
         if self.default_profile not in names:
             self.default_profile = names[0]
         # 启动载入默认方案（不是上次用的那套）——用户明确指定的才是默认
@@ -107,6 +110,8 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.config_tab_index = self.tabs.addTab(self._build_config_page(), "配置 ⚙")
         self.tabs.addTab(self.log_panel, "日志输出 📋")
         self.history_tab_index = self.tabs.addTab(self.history, "接收历史 📜")
+        self.selftest = SelftestPanel(self.settings, self.selftest_context, self)
+        self.tabs.addTab(self.selftest, "自测 🧪")
         layout.addWidget(self.tabs, 1)
 
         self.setLayout(layout)
@@ -122,6 +127,17 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.tabs.setCurrentIndex(
             self.config_tab_index if self._first_run else self.tabs.indexOf(self.log_panel)
         )
+
+    def selftest_context(self):
+        """自测页签要的东西：跑没跑、当前通道、应答表、两个端口。"""
+        return {
+            "running": self.running,
+            "enable_data": self.data_checkbox.isChecked(),
+            "channels": list(self.channel_list.channels),
+            "http_responses": self.http_responses,
+            "ws_port": self.port_input.text().strip(),
+            "data_addr": self.addr_input.text().strip(),
+        }
 
     def _build_action_bar(self):
         """启动/停止 + 状态，常驻在页签上方。"""

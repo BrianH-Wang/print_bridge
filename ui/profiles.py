@@ -14,7 +14,7 @@ from logger import print_log
 from printer_utils import (
     DEFAULT_PRINTER_KEY, SYSTEM_PRINTER, get_available_printers, make_printer,
 )
-from ui.constants import DATA_ADDR, DEFAULT_PROFILE_NAME, MAX_PROFILES
+from ui.constants import DATA_ADDR, DEFAULT_PROFILE_NAME, LEGACY_PROFILE_NAMES, MAX_PROFILES
 from ui.dialogs.template import SAVE as TEMPLATE_SAVE
 from ui.dialogs.template import TemplateDialog
 from ui.helpers import normalize_addr, sanitize_channels, sanitize_printers
@@ -42,6 +42,11 @@ class ProfileMixin:
             if not isinstance(item, dict):
                 continue
             name = str(item.get("name", "")).strip()
+            # 老名字（默认 / 分拣设备）改成新名字；新名字已经被占了就保留老的，不覆盖
+            wanted = LEGACY_PROFILE_NAMES.get(name)
+            if wanted and wanted not in names and not any(
+                    str(o.get("name", "")).strip() == wanted for o in items if isinstance(o, dict)):
+                name = wanted
             if not name or name in names:
                 continue
             names.add(name)

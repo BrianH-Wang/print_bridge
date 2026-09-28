@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
 )
 
 from mapping import (
+    check_files,
     COMMON_TRANSFORMS, MERGE, ON_DEFAULT, ON_ERROR, ON_SKIP, PASSTHROUGH, PICK,
     flatten_keys, make_mapping, map_fields,
 )
@@ -151,6 +152,14 @@ class FieldMappingPage(QWidget):
 
         source = QLineEdit(field.get("source", ""))
         source.setPlaceholderText("code")
+        # 内容校验（文件大小 / 格式）界面上没有格子，手改 json 配的挂在这一行上带着走，
+        # 免得在这里改个名字就把校验弄丢了
+        source.setProperty("check", field.get("check"))
+        if field.get("check"):
+            check = field["check"]
+            limit = f"≤{check['max_bytes'] // 1024} KB" if check.get("max_bytes") else ""
+            kinds = "/".join(check.get("formats") or []) or "任意格式"
+            source.setToolTip(f"文件校验：{kinds} {limit}".strip())
         source.textChanged.connect(self._on_changed)
         self.table.setCellWidget(row, 0, source)
 
@@ -246,6 +255,7 @@ class FieldMappingPage(QWidget):
                 "transforms": [transform] if transform else [],
                 "required": bool(checkbox and checkbox.isChecked()),
                 "default": self._cell_text(row, 4),
+                "check": self.table.cellWidget(row, 0).property("check"),
             })
         return make_mapping(self.mode_combo.currentData(), fields,
                             self.missing_combo.currentData())
@@ -282,6 +292,9 @@ class FieldMappingPage(QWidget):
             return
 
         result, problems = map_fields(sample, mapping)
+        bad = check_files(sample, mapping)
+        if bad:
+            problems = [f"文件校验不通过：{bad[1]}（设备会收到 {bad[0]}）"] + problems
         self.preview.setPlainText(json.dumps(result, ensure_ascii=False, indent=2))
         self.problem.setText("❌ " + "　·　".join(problems) if problems else "")
         self.changed.emit()

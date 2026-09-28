@@ -30,6 +30,11 @@ if [[ -d configs ]]; then
   rsync -a --exclude .DS_Store configs/ "$STAGE/configs/"
 fi
 
+# 3b. 使用者手册（中 / 英）转成 HTML 和 .app 并排；开发文档不带
+.venv/bin/python scripts/build_manuals.py build/manuals
+cp "build/manuals/使用说明.html" "build/manuals/User Guide.html" \
+   "build/manuals/高级配置说明.html" "build/manuals/Advanced Guide.html" "$STAGE/"
+
 # 4. 用 UDRW(可读写)先建一个 dmg
 TMP_DMG="$(mktemp -d)/stage.dmg"
 hdiutil create -ov -volname "Print Bridge" -fs HFS+ -srcfolder "$STAGE" "$TMP_DMG"

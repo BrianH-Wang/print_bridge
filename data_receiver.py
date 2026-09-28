@@ -14,7 +14,7 @@ from channels import (
     build_body, describe_channel, http_status_for, make_channel, resolve_response, route,
 )
 from logger import print_log, shorten
-from mapping import build_outbound, map_fields
+from mapping import build_outbound, check_files, map_fields
 from pairing import (
     ATTACH, PRIMARY, attach_channels, clear_pairs, describe_pair, expire_pairs,
     pair_of, role_of, store_attach, take_attaches,
@@ -418,7 +418,10 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         """
         code, message = response_for(key, channel, **fmt)
         body = build_body(channel, key, code, message, extra)
-        self._send_json(http_status_for(channel, code), body)
+        status = http_status_for(channel, code)
+        print_log(f"📨 回给设备 HTTP {status}（{key}）: "
+                  f"{json.dumps(shorten(body), ensure_ascii=False)}")
+        self._send_json(status, body)
 
     def do_GET(self):
         self._send_json(200, {
@@ -550,6 +553,14 @@ class _CallbackHandler(BaseHTTPRequestHandler):
 
     def _dispatch(self, data, channel, deadline):
         """转译字段、组装报文、推给前端；双向模式下等前端回一条再答复设备。"""
+        # 文件校验放在最前面：图片过大 / 解不开的请求连暂存区都不该进
+        bad = check_files(data, channel.get("mapping"))
+        if bad:
+            scene, error, limit = bad
+            print_log(f"❌ [{channel['key']}] 文件校验不通过: {error}")
+            self._reply(scene, channel=channel, error=error, limit=limit)
+            return
+
         if role_of(channel) == ATTACH:
             self._hold_for_pairing(data, channel)
             return

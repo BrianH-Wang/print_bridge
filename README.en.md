@@ -2,6 +2,8 @@
 
 [中文](README.md) | **English**
 
+> Just want to use it? Read the [User Guide](docs/User%20Guide.md). Doing an integration? Read the [Advanced Guide](docs/Advanced%20Guide.md). Developer notes are in Chinese under `docs/`.
+
 A cross-platform (Windows / macOS / Linux) **local printing and data-relay service** with a PyQt6 GUI.
 
 The problem it solves: a browser or web page cannot drive the local printer directly, nor can it receive callback data from third-party systems. This program runs on the local machine as a bridge — talking to the front-end page over WebSocket on one side, and driving the system printer and receiving external HTTP callbacks on the other.

@@ -1,0 +1,147 @@
+{
+  "print-bridge-config": 1,
+  "exported_at": "2026-09-28 17:30:07",
+  "note": "只有 /callback 一条（双向，等前端回分拣格口），不配对、收到就推。应答按设备文档：success/code/msg/data，错误码 404/500。设备不传图或前端不要图时用这份。",
+  "profile": {
+    "name": "双向获取数据（无图片）",
+    "ws_port": "8765",
+    "data_addr": "0.0.0.0:13213",
+    "enable_print": false,
+    "enable_data": true,
+    "printers": [
+      {
+        "key": "label",
+        "label": "标签",
+        "kind": "system",
+        "queue": "",
+        "host": "",
+        "port": 9100,
+        "timeout": 10.0
+      }
+    ],
+    "channels": [
+      {
+        "key": "sorter_data",
+        "label": "分拣数值",
+        "path": "/callback",
+        "flow": "twoway",
+        "timeout": 15.0,
+        "dispatch": "concurrent",
+        "envelope": {
+          "success": "{{__success}}",
+          "code": "{{__code}}",
+          "msg": "{{__message}}",
+          "data": "{{__data}}"
+        },
+        "http_status": "follow_code",
+        "responses": {
+          "ok": {
+            "message": "操作成功"
+          },
+          "ok_reply": {
+            "message": "操作成功"
+          },
+          "bad_json": {
+            "code": 404,
+            "message": "服务器接口错误"
+          },
+          "map_failed": {
+            "code": 404,
+            "message": "服务器接口错误"
+          },
+          "too_large": {
+            "code": 404,
+            "message": "服务器接口错误"
+          },
+          "no_client": {
+            "code": 500,
+            "message": "服务器逻辑错误"
+          },
+          "reply_timeout": {
+            "code": 500,
+            "message": "服务器逻辑错误"
+          },
+          "queue_timeout": {
+            "code": 500,
+            "message": "服务器逻辑错误"
+          },
+          "pair_timeout": {
+            "code": 500,
+            "message": "服务器逻辑错误"
+          }
+        },
+        "mapping": {
+          "mode": "pick",
+          "on_missing": "error",
+          "fields": [
+            {
+              "source": "code",
+              "target": "expressNo",
+              "transforms": [],
+              "required": true,
+              "default": null,
+              "check": null
+            },
+            {
+              "source": "weight",
+              "target": "weight",
+              "transforms": [
+                "number"
+              ],
+              "required": false,
+              "default": null,
+              "check": null
+            },
+            {
+              "source": "length",
+              "target": "length",
+              "transforms": [
+                "number"
+              ],
+              "required": false,
+              "default": null,
+              "check": null
+            },
+            {
+              "source": "width",
+              "target": "width",
+              "transforms": [
+                "number"
+              ],
+              "required": false,
+              "default": null,
+              "check": null
+            },
+            {
+              "source": "height",
+              "target": "height",
+              "transforms": [
+                "number"
+              ],
+              "required": false,
+              "default": null,
+              "check": null
+            }
+          ]
+        },
+        "outbound": null,
+        "sample": {
+          "code": "CCSL2026083100123",
+          "weight": "12.50",
+          "height": "35.20",
+          "width": "28.00",
+          "length": "40.75"
+        },
+        "pair": null,
+        "reply_sample": {
+          "route": "A",
+          "totalCount": 100,
+          "currentCount": 1,
+          "mainOrderNo": "MO2026083100123"
+        },
+        "reply_raw": true
+      }
+    ]
+  },
+  "http_responses": {}
+}
