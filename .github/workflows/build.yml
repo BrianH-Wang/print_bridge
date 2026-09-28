@@ -17,18 +17,18 @@ jobs:
         include:
           - os: macos-14          # arm64 (Apple Silicon runner)
             artifact_name: print-bridge-macos-arm64
-          - os: macos-13          # x86_64 (Intel runner)
-            artifact_name: print-bridge-macos-x64
+          # macos-13（Intel）的 runner 已经下线,排队 24 小时也等不到;
+          # 需要 Intel 包时在 Intel 机器上本地打。
           - os: windows-2022
             artifact_name: print-bridge-windows-x64
           - os: ubuntu-22.04
             artifact_name: print-bridge-linux-x64
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Setup Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
           python-version: '3.13'
 
@@ -38,39 +38,38 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y libcups2-dev
 
-      - name: Install Python deps
+      # venv 里的 python 三个平台路径不同(Windows 是 Scripts\python.exe),
+      # 这里算一次放进环境变量,后面的步骤都用 $PY,不再分平台写两份
+      - name: Create venv
         shell: bash
         run: |
           set -euo pipefail
           python -m venv .venv
-          # Linux/macOS 用 bash,Windows 这里 shell=bash 实际被 GHA 重定向成 Git Bash,
-          # 在 PowerShell 阶段前不会执行;Windows 步骤写在下面。
-          .venv/bin/python -m pip install --upgrade pip
-          .venv/bin/python -m pip install pyinstaller PyQt6 websockets markdown
-          if [ "$RUNNER_OS" = "Linux" ] || [ "$RUNNER_OS" == "macOS" ]; then
-            .venv/bin/python -m pip install pycups || true
+          if [ -x .venv/Scripts/python.exe ]; then
+            echo "PY=.venv/Scripts/python.exe" >> "$GITHUB_ENV"
+          else
+            echo "PY=.venv/bin/python" >> "$GITHUB_ENV"
           fi
-        env:
-          RUNNER_OS: ${{ runner.os }}
 
-      - name: Install Windows-only deps
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          .venv\Scripts\python.exe -m pip install --upgrade pip
-          .venv\Scripts\python.exe -m pip install pyinstaller PyQt6 websockets markdown pywin32
-
-      - name: Build (Linux/Windows)
-        if: runner.os != 'macOS'
+      - name: Install Python deps
         shell: bash
-        run: .venv/bin/python -m PyInstaller --noconfirm print_bridge.spec
-        # 注意:Windows runner 上 `bash` 即 Git Bash,可直接跑上述命令。
-
-      - name: Build (macOS)
-        if: runner.os == 'macOS'
         run: |
-          .venv/bin/python -m PyInstaller --noconfirm print_bridge.spec
-          bash scripts/make_dmg.sh
+          set -euo pipefail
+          "$PY" -m pip install --upgrade pip
+          "$PY" -m pip install pyinstaller PyQt6 websockets markdown
+          case "$RUNNER_OS" in
+            Windows) "$PY" -m pip install pywin32 ;;
+            *)       "$PY" -m pip install pycups || true ;;
+          esac
+
+      - name: Build
+        shell: bash
+        run: |
+          set -euo pipefail
+          "$PY" -m PyInstaller --noconfirm print_bridge.spec
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            bash scripts/make_dmg.sh
+          fi
 
       - name: Zip artifact (Linux/Windows)
         if: runner.os != 'macOS'
@@ -78,21 +77,22 @@ jobs:
         run: |
           Compress-Archive -Path dist/print_bridge -DestinationPath ${{ matrix.artifact_name }}.zip
 
+      # 私有仓库的 artifact 存储配额很小,只留几天、只传成品:
+      # macOS 只传 DMG(里面已经带了 .app、configs 和说明书),不再重复传 .app 目录
       - name: Upload artifact (Linux/Windows)
         if: runner.os != 'macOS'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact_name }}
           path: ${{ matrix.artifact_name }}.zip
           if-no-files-found: error
+          retention-days: 5
 
       - name: Upload artifact (macOS)
         if: runner.os == 'macOS'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: ${{ matrix.artifact_name }}
-          path: |
-            dist/Print Bridge.dmg
-            dist/Print Bridge.app
-            configs
+          path: dist/Print Bridge.dmg
           if-no-files-found: error
+          retention-days: 5
