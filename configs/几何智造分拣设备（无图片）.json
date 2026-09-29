@@ -1,7 +1,7 @@
 {
   "print-bridge-config": 1,
-  "exported_at": "2026-09-28 17:30:07",
-  "note": "只有 /callback 一条（双向，等前端回分拣格口），不配对、收到就推。应答按设备文档：success/code/msg/data，错误码 404/500。设备不传图或前端不要图时用这份。",
+  "exported_at": "2026-09-29 11:00:28",
+  "note": "只有 /callback 一条（双向，等前端回分拣格口），不配对、收到就推。应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，出错带具体原因。设备不传图或前端不要图时用这份。",
   "profile": {
     "name": "双向获取数据（无图片）",
     "ws_port": "8765",
@@ -40,34 +40,6 @@
           },
           "ok_reply": {
             "message": "操作成功"
-          },
-          "bad_json": {
-            "code": 404,
-            "message": "服务器接口错误"
-          },
-          "map_failed": {
-            "code": 404,
-            "message": "服务器接口错误"
-          },
-          "too_large": {
-            "code": 404,
-            "message": "服务器接口错误"
-          },
-          "no_client": {
-            "code": 500,
-            "message": "服务器逻辑错误"
-          },
-          "reply_timeout": {
-            "code": 500,
-            "message": "服务器逻辑错误"
-          },
-          "queue_timeout": {
-            "code": 500,
-            "message": "服务器逻辑错误"
-          },
-          "pair_timeout": {
-            "code": 500,
-            "message": "服务器逻辑错误"
           }
         },
         "mapping": {

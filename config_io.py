@@ -157,30 +157,18 @@ _DEVICE_ENVELOPE = {
     "data": "{{__data}}",
 }
 
-# 设备文档（docs/对接几何智造分拣设备文档.md）的错误码表：
-# 成功一律「操作成功」；请求不对归 404「服务器接口错误」；我们这边没接上、等不到归 500「服务器逻辑错误」。
-_INTERFACE_ERROR = {"code": 404, "message": "服务器接口错误"}
-_LOGIC_ERROR = {"code": 500, "message": "服务器逻辑错误"}
+# 应答文案：成功按设备文档回「操作成功」；出错的场景不覆盖，用程序默认的带原因的文案
+# （缺哪个字段、JSON 哪里错、等了几秒）。设备文档里的 404「服务器接口错误」/ 500「服务器逻辑错误」
+# 是前端页面那一侧回的，不是这里的事。
 _CALLBACK_RESPONSES = {
     "ok": {"message": "操作成功"},
     "ok_reply": {"message": "操作成功"},
-    "bad_json": _INTERFACE_ERROR,
-    "map_failed": _INTERFACE_ERROR,
-    "too_large": _INTERFACE_ERROR,
-    "no_client": _LOGIC_ERROR,
-    "reply_timeout": _LOGIC_ERROR,
-    "queue_timeout": _LOGIC_ERROR,
-    "pair_timeout": _LOGIC_ERROR,
 }
-# 上传接口多两档：413 文件过大、415 解析失败（文档 2.3.1）
+# 上传接口按文档多两档：413 文件过大、415 解析失败，码照文档、文案带上原因
 _UPLOAD_RESPONSES = {
     "ok": {"message": "操作成功"},
-    "bad_json": _INTERFACE_ERROR,
-    "map_failed": _INTERFACE_ERROR,
-    "queue_timeout": _LOGIC_ERROR,
-    "too_large": {"code": 413, "message": "文件超过 2M 限制"},
-    "file_too_large": {"code": 413, "message": "文件超过 2M 限制"},
-    "file_invalid": {"code": 415, "message": "文件解析失败，请检查 base64 内容与文件格式"},
+    "file_too_large": {"code": 413, "message": "文件超过 2M 限制：{error}"},
+    "file_invalid": {"code": 415, "message": "文件解析失败：{error}"},
 }
 _UPLOAD_FILE_CHECK = {"type": "file", "max_bytes": 2 * 1024 * 1024, "formats": ["jpg", "png", "pdf"]}
 # 文档 2.4.1 里那张 1x1 PNG，样例和自测都用它
@@ -281,11 +269,11 @@ TEMPLATES = [
                 "适合从零开始，照着填自己的接口。", _blank_profile),
     ("几何智造分拣设备", "两条链接：/callback 收数值（双向，等前端回分拣格口）、"
                         "/upload 收图片（单向）。按条码配对合成一条。"
-                        "应答按设备文档：success/code/msg/data，错误码 404/500，"
-                        "图片超 2M 回 413、解不开回 415。", _sorter_profile),
+                        "应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，"
+                        "出错带具体原因；图片超 2M 回 413、解不开回 415。", _sorter_profile),
     ("几何智造分拣设备（无图片）", "只有 /callback 一条（双向，等前端回分拣格口），不配对、收到就推。"
-                                "应答按设备文档：success/code/msg/data，错误码 404/500。"
-                                "设备不传图或前端不要图时用这份。",
+                                "应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，"
+                                "出错带具体原因。设备不传图或前端不要图时用这份。",
      _sorter_no_image_profile),
 ]
 
