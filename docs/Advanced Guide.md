@@ -111,6 +111,8 @@ Where to edit is in section 7. Parameterised transforms show in the UI as "(cust
 | **Skip the field** | The page's data simply lacks that field |
 | **Use default** | The value in the "Default" column is inserted |
 
+A field that is **not** marked required ignores this policy when missing: with a default it uses the default, without one it is simply skipped, so a device omitting an optional field never gets the whole record rejected.
+
 A transform error (say "To number" meets `"abc"`) is always treated as an error, and the log names the field.
 
 ### 3.5 File checks: 413 for oversized, 415 for unreadable

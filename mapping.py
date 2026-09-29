@@ -258,12 +258,15 @@ def map_fields(data, mapping):
 
         value = get_path(data, source)
         if value is MISSING:
+            default = field.get("default", "")
             if field.get("required") and on_missing == ON_ERROR:
                 problems.append(f"缺少必填字段 {source}")
                 continue
-            if on_missing == ON_SKIP and not field.get("default", ""):
+            # 没配默认值就整个跳过这个字段：硬塞一个空串进去，后面「转数字」必然报错，
+            # 设备少发一个可选字段就会连累整条数据被拒
+            if on_missing == ON_SKIP or default in ("", None):
                 continue
-            value = field.get("default", "")
+            value = default
 
         value, error = apply_transforms(value, field.get("transforms"))
         if error:
