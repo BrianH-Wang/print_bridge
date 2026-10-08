@@ -20,7 +20,7 @@ def build_reply(incoming, args):
         "route": args.route,
         "totalCount": args.total,
         "currentCount": args.current,
-        "mainOrderNo": f"MO{incoming.get('code', '')}",
+        "mainOrderNo": f"MO{incoming.get('shipmentCode', incoming.get('code', ''))}",
     }
     if args.pdf:
         # 真实场景这里是标签 PDF 的 base64，模拟时给一个最小合法 PDF

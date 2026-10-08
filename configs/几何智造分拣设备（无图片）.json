@@ -48,7 +48,7 @@
           "fields": [
             {
               "source": "code",
-              "target": "expressNo",
+              "target": "shipmentCode",
               "transforms": [],
               "required": true,
               "default": null,

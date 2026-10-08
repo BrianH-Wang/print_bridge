@@ -68,12 +68,16 @@ ROW_HEIGHT = 48
 MIN_VISIBLE_ROWS = 4  # 表格初始至少能看见的行数（多了会把窗口最小高度顶起来）
 
 # 默认要展示的数据列；启动时就创建出来，即使本次没收到也保留"-"占位。
+# 单号字段：单向方案叫 expressNo，双向（几何智造）转译成 shipmentCode；搜索、右键复制都认这几个
+WAYBILL_FIELDS = ("expressNo", "shipmentCode")
+
 DEFAULT_DATA_COLUMNS = ["expressNo", "weight", "length", "width", "height"]
 
 # 数据字段名 → 中文表头；查不到的按原 key 显示。
 # 外部系统的字段名不能改，这里只在显示层翻译。
 FIELD_LABELS = {
     "expressNo": "快递单号",
+    "shipmentCode": "运单号",
     "weight": "重量(kg)",
     "length": "长(cm)",
     "width": "宽(cm)",

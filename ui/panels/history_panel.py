@@ -26,7 +26,7 @@ from mapping import build_outbound
 from pairing import expire_pairs
 from ui.constants import (
     DEFAULT_DATA_COLUMNS, FIELD_LABELS, HISTORY_FIXED_COLUMNS, HISTORY_POLL_MS,
-    MAX_HISTORY, MIN_VISIBLE_ROWS, ROW_HEIGHT, THUMB_SIZE,
+    MAX_HISTORY, MIN_VISIBLE_ROWS, ROW_HEIGHT, THUMB_SIZE, WAYBILL_FIELDS,
 )
 from ui.dialogs import AdvancedSearchDialog, HistorySearchDialog, ImagePreviewDialog
 from ui.helpers import human_bytes
@@ -100,7 +100,7 @@ class HistoryPanel(QWidget):
         search = QHBoxLayout()
         search.addWidget(QLabel("搜索"))
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("按单号 / expressNo 模糊搜索")
+        self.search_input.setPlaceholderText("按单号（expressNo / shipmentCode）模糊搜索")
         self.search_input.setClearButtonEnabled(True)
         self.search_input.returnPressed.connect(self._apply_filter)  # 回车也触发
         search.addWidget(self.search_input, 1)
@@ -234,7 +234,7 @@ class HistoryPanel(QWidget):
                 item = QTableWidgetItem(text)
                 item.setToolTip(text)
                 # 快递单号列：把原值存进 UserRole，右键菜单按这个复制
-                if key == "expressNo":
+                if key in WAYBILL_FIELDS:
                     item.setData(Qt.ItemDataRole.UserRole + 1, str(value))
                     item.setToolTip(f"{text}\n右键复制单号")
             self.history_table.setItem(row, index, item)
@@ -401,7 +401,7 @@ class HistoryPanel(QWidget):
         if self.filter_query:
             fields = record.get("fields") or {}
             haystack = " ".join([
-                str(fields.get("expressNo", "")),
+                *(str(fields.get(name, "")) for name in WAYBILL_FIELDS),
                 str(fields.get("orderNo", "")),
                 str(fields.get("trackingNo", "")),
                 str(record.get("time", "")),
@@ -492,14 +492,13 @@ class HistoryPanel(QWidget):
             return
         menu = QMenu(self.history_table)
 
-        # 快递单号列：单元格存了 raw 单号，复制走原值而非折叠摘要
-        if index.column() == 1:  # 默认第 1 列就是 expressNo
-            item = self.history_table.item(index.row(), index.column())
-            raw = item.data(Qt.ItemDataRole.UserRole + 1) if item else None
-            if raw:
-                act = menu.addAction("复制快递单号")
-                act.triggered.connect(lambda: self._copy_text(raw))
-                menu.addSeparator()
+        # 单号列（expressNo / shipmentCode，不一定在第 1 列）：单元格存了 raw 单号，复制走原值而非折叠摘要
+        item = self.history_table.item(index.row(), index.column())
+        raw = item.data(Qt.ItemDataRole.UserRole + 1) if item else None
+        if raw:
+            act = menu.addAction("复制单号")
+            act.triggered.connect(lambda: self._copy_text(raw))
+            menu.addSeparator()
 
         resend_act = menu.addAction("重发选中")
         resend_act.triggered.connect(self.resend_selected)

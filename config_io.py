@@ -205,7 +205,7 @@ def _sorter_data_channel(pair=None):
         # 前端回的已经是 success/code/msg/data 的完整应答，原样交给设备，不再套一层
         reply_raw=True,
         mapping=make_mapping(PICK, [
-            {"source": "code", "target": "expressNo", "required": True},
+            {"source": "code", "target": "shipmentCode", "required": True},
             {"source": "weight", "target": "weight", "transforms": ["number"]},
             {"source": "length", "target": "length", "transforms": ["number"]},
             {"source": "width", "target": "width", "transforms": ["number"]},
@@ -232,16 +232,16 @@ def sorter_profile():
         "enable_data": True,
         "printers": [make_printer(key="label", label="标签")],
         "channels": [
-            _sorter_data_channel(pair=make_pair(PRIMARY, "parcel", field="expressNo", wait=5)),
+            _sorter_data_channel(pair=make_pair(PRIMARY, "parcel", field="shipmentCode", wait=5)),
             make_channel(
                 key="sorter_image", label="分拣图片", path="/upload",
                 flow=ONEWAY,
                 mapping=make_mapping(PICK, [
-                    {"source": "code", "target": "expressNo", "required": True},
+                    {"source": "code", "target": "shipmentCode", "required": True},
                     {"source": "file", "target": "imageBase64", "required": True,
                      "check": _UPLOAD_FILE_CHECK},
                 ]),
-                pair=make_pair(ATTACH, "parcel", field="expressNo", keep=60),
+                pair=make_pair(ATTACH, "parcel", field="shipmentCode", keep=60),
                 envelope=_DEVICE_ENVELOPE,
                 responses=_UPLOAD_RESPONSES,
                 sample={"code": "CCSL2026083100123", "file": _TINY_PNG},

@@ -28,6 +28,32 @@ from ui.helpers import normalize_addr, sanitize_channels, sanitize_printers
 # 老版本首次运行建的「单向获取数据」原封不动时的通道，读方案时认出来就升级
 _OLD_ONEWAY_CHANNELS = [make_channel(key=DEFAULT_CHANNEL_KEY, label="默认", path=ANY_PATH)]
 
+# 几何智造模板建的两条通道：老版本把设备的 code 转成 expressNo，现在前端要 shipmentCode
+_SORTER_CHANNEL_KEYS = ("sorter_data", "sorter_image")
+
+
+def _upgrade_sorter_code_field(channels):
+    """把模板建出来的 code → expressNo 改成 code → shipmentCode，配对字段跟着改。
+
+    只认模板原样的那一条映射（source=code、target=expressNo），用户自己改过的不碰。
+    返回是否改动过。
+    """
+    changed = False
+    for channel in channels:
+        if channel.get("key") not in _SORTER_CHANNEL_KEYS:
+            continue
+        fields = (channel.get("mapping") or {}).get("fields") or []
+        renamed = False
+        for field in fields:
+            if field.get("source") == "code" and field.get("target") == "expressNo":
+                field["target"] = "shipmentCode"
+                renamed = True
+        pair = channel.get("pair")
+        if renamed and pair and pair.get("field") == "expressNo":
+            pair["field"] = "shipmentCode"
+        changed = changed or renamed
+    return changed
+
 
 class ProfileMixin:
     """需要宿主提供：settings、各卡片控件、printer_list。"""
@@ -65,6 +91,9 @@ class ProfileMixin:
                 # 换成现在的 /callback 单向通道，模拟设备才有对的报文可发
                 profile["channels"] = sanitize_channels(oneway_profile())
                 print_log(f"🔧 方案「{name}」的接收通道已更新为 /callback 单向")
+                upgraded = True
+            if _upgrade_sorter_code_field(profile["channels"]):
+                print_log(f"🔧 方案「{name}」的单号字段已改为 code → shipmentCode")
                 upgraded = True
             profiles.append(profile)
 

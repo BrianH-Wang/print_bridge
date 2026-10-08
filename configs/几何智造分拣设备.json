@@ -48,7 +48,7 @@
           "fields": [
             {
               "source": "code",
-              "target": "expressNo",
+              "target": "shipmentCode",
               "transforms": [],
               "required": true,
               "default": null,
@@ -107,7 +107,7 @@
         "pair": {
           "role": "primary",
           "group": "parcel",
-          "field": "expressNo",
+          "field": "shipmentCode",
           "value": "",
           "rename": "",
           "wait": 5.0,
@@ -156,7 +156,7 @@
           "fields": [
             {
               "source": "code",
-              "target": "expressNo",
+              "target": "shipmentCode",
               "transforms": [],
               "required": true,
               "default": null,
@@ -188,7 +188,7 @@
         "pair": {
           "role": "attach",
           "group": "parcel",
-          "field": "expressNo",
+          "field": "shipmentCode",
           "value": "",
           "rename": "",
           "wait": 5.0,

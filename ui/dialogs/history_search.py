@@ -14,7 +14,7 @@ from data_receiver import broadcast
 from logger import print_log, shorten
 from ui.constants import (
     DEFAULT_DATA_COLUMNS, FIELD_LABELS, HISTORY_FIXED_COLUMNS, MAX_HISTORY,
-    MIN_VISIBLE_ROWS, ROW_HEIGHT, THUMB_SIZE,
+    MIN_VISIBLE_ROWS, ROW_HEIGHT, THUMB_SIZE, WAYBILL_FIELDS,
 )
 from ui.dialogs.image_preview import ImagePreviewDialog
 from ui.helpers import human_bytes
@@ -38,7 +38,7 @@ class HistorySearchDialog(QDialog):
         form_row.setSpacing(8)
 
         self.query_input = QLineEdit()
-        self.query_input.setPlaceholderText("按单号 / expressNo 模糊搜索")
+        self.query_input.setPlaceholderText("按单号（expressNo / shipmentCode）模糊搜索")
         self.query_input.setClearButtonEnabled(True)
         self.query_input.returnPressed.connect(self._run_search)
         form_row.addWidget(self.query_input, 2)
@@ -204,7 +204,7 @@ class HistorySearchDialog(QDialog):
         fields = record.get("fields") or {}
         if cond["query"]:
             haystack = " ".join([
-                str(fields.get("expressNo", "")),
+                *(str(fields.get(name, "")) for name in WAYBILL_FIELDS),
                 str(fields.get("orderNo", "")),
                 str(fields.get("trackingNo", "")),
                 str(record.get("time", "")),
@@ -268,7 +268,7 @@ class HistorySearchDialog(QDialog):
                 text = str(shorten(value))
                 item = QTableWidgetItem(text)
                 item.setToolTip(text)
-                if key == "expressNo":
+                if key in WAYBILL_FIELDS:
                     item.setData(Qt.ItemDataRole.UserRole + 1, str(value))
                     item.setToolTip(f"{text}\n右键复制单号")
             self.result_table.setItem(row, index, item)
@@ -338,13 +338,13 @@ class HistorySearchDialog(QDialog):
             return
         menu = QMenu(self.result_table)
 
-        if index.column() == 1:  # 快递单号列
-            item = self.result_table.item(index.row(), index.column())
-            raw = item.data(Qt.ItemDataRole.UserRole + 1) if item else None
-            if raw:
-                act = menu.addAction("复制快递单号")
-                act.triggered.connect(lambda: self.panel._copy_text(raw))
-                menu.addSeparator()
+        # 单号列（expressNo / shipmentCode）
+        item = self.result_table.item(index.row(), index.column())
+        raw = item.data(Qt.ItemDataRole.UserRole + 1) if item else None
+        if raw:
+            act = menu.addAction("复制单号")
+            act.triggered.connect(lambda: self.panel._copy_text(raw))
+            menu.addSeparator()
 
         resend_act = menu.addAction("重发选中")
         resend_act.triggered.connect(self._resend_selected)
