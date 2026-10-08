@@ -296,6 +296,9 @@ class _Frontend:
         self.error = None
         self.reply_with = None      # 当前用例要回的内容；None = 不回
         self.reply_twoway = False
+        # 可选：按收到的报文决定回什么，返回 (reply_with, twoway)。
+        # 模拟设备页签会几条通道交错着发，一份全局的 reply_with 不够用
+        self.reply_for = None
         self._loop = None
         self._ws = None
         self._thread = threading.Thread(target=self._main, daemon=True)
@@ -345,6 +348,8 @@ class _Frontend:
                 with self.lock:
                     self.received.append(message)
                     reply_with, twoway = self.reply_with, self.reply_twoway
+                if self.reply_for is not None:
+                    reply_with, twoway = self.reply_for(message)
                 if self.mode != MOCK:
                     continue
                 msg_id = _find_id(message)
@@ -420,13 +425,14 @@ def endpoints(profile):
     return f"http://{host}:{port}", f"ws://127.0.0.1:{int(profile.get('ws_port') or 8765)}"
 
 
-def _post(base_url, path, body, timeout):
+def _post(base_url, path, body, timeout, tagged=True):
+    """tagged=False 时不带自测标记，服务端当成真设备来的：记日志、进接收历史。"""
     if not isinstance(body, bytes):
         body = json.dumps(body, ensure_ascii=False).encode("utf-8")
-    req = urllib.request.Request(
-        base_url + path, data=body, method="POST",
-        headers={"Content-Type": "application/json; charset=utf-8", SELFTEST_HEADER: "1"},
-    )
+    headers = {"Content-Type": "application/json; charset=utf-8"}
+    if tagged:
+        headers[SELFTEST_HEADER] = "1"
+    req = urllib.request.Request(base_url + path, data=body, method="POST", headers=headers)
     started = time.monotonic()
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:

@@ -9,12 +9,14 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 
-from config_io import build_export, bundled_configs_dir, dumps, parse_import
+from config_io import build_export, bundled_configs_dir, dumps, parse_import, sorter_profile
 from logger import print_log
 from printer_utils import (
     DEFAULT_PRINTER_KEY, SYSTEM_PRINTER, get_available_printers, make_printer,
 )
-from ui.constants import DATA_ADDR, DEFAULT_PROFILE_NAME, LEGACY_PROFILE_NAMES, MAX_PROFILES
+from ui.constants import (
+    DATA_ADDR, DEFAULT_PROFILE_NAME, LEGACY_PROFILE_NAMES, MAX_PROFILES, ONEWAY_PROFILE_NAME,
+)
 from ui.dialogs.template import SAVE as TEMPLATE_SAVE
 from ui.dialogs.template import TemplateDialog
 from ui.helpers import normalize_addr, sanitize_channels, sanitize_printers
@@ -53,13 +55,15 @@ class ProfileMixin:
             profiles.append(self._sanitize_profile(name, item))
 
         if not profiles:
-            # 首次运行：把上一版本记住的地址带过来，不让用户重填
+            # 首次运行：排第一的就是 ★ 默认方案——双向获取数据（几何智造分拣设备模板）
+            profiles.append(self._sanitize_profile(DEFAULT_PROFILE_NAME, sorter_profile()))
+            # 单向方案一并建好：把上一版本记住的地址带过来，不让用户重填
             addr = normalize_addr(self.settings.value("data_addr")) or DATA_ADDR
             # 首次运行顺手把系统默认队列配成一台打印机，省得开箱是空表
             queues, default_queue = get_available_printers()
             seed = [make_printer(DEFAULT_PRINTER_KEY, "默认", SYSTEM_PRINTER,
                                  queue=default_queue or (queues[0] if queues else ""))]
-            profiles.append(self._sanitize_profile(DEFAULT_PROFILE_NAME, {
+            profiles.append(self._sanitize_profile(ONEWAY_PROFILE_NAME, {
                 "ws_port": "8765",
                 "data_addr": addr,
                 "printers": seed if (queues or default_queue) else [],

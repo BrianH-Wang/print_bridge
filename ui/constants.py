@@ -17,11 +17,12 @@ from printer_utils import NETWORK_PRINTER, SYSTEM_PRINTER
 DATA_ADDR = "localhost:13213/callback"
 DATA_PORT = 13213     # 地址里没写端口时补的默认端口
 MAX_PROFILES = 20     # 配置方案（仓库A / 仓库B…）最多保存的套数
-DEFAULT_PROFILE_NAME = "单向获取数据"
+DEFAULT_PROFILE_NAME = "双向获取数据"   # 首次运行的 ★ 默认方案：几何智造分拣设备
+ONEWAY_PROFILE_NAME = "单向获取数据"    # 首次运行一并建好，一条兜底通道只转发
 # 老版本内置方案的名字 → 现在的名字。读方案时顺手改过来，用户不用自己重命名
 LEGACY_PROFILE_NAMES = {
-    "默认": DEFAULT_PROFILE_NAME,
-    "分拣设备": "双向获取数据",
+    "默认": ONEWAY_PROFILE_NAME,
+    "分拣设备": DEFAULT_PROFILE_NAME,
     "分拣设备（无图片）": "双向获取数据（无图片）",
 }
 

@@ -222,7 +222,7 @@ def _sorter_data_channel(pair=None):
     )
 
 
-def _sorter_profile():
+def sorter_profile():
     """几何智造分拣设备：图片 + 数值两条链接，按条码配对成一条。"""
     return {
         "name": "双向获取数据",
@@ -270,7 +270,7 @@ TEMPLATES = [
     ("几何智造分拣设备", "两条链接：/callback 收数值（双向，等前端回分拣格口）、"
                         "/upload 收图片（单向）。按条码配对合成一条。"
                         "应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，"
-                        "出错带具体原因；图片超 2M 回 413、解不开回 415。", _sorter_profile),
+                        "出错带具体原因；图片超 2M 回 413、解不开回 415。", sorter_profile),
     ("几何智造分拣设备（无图片）", "只有 /callback 一条（双向，等前端回分拣格口），不配对、收到就推。"
                                 "应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，"
                                 "出错带具体原因。设备不传图或前端不要图时用这份。",

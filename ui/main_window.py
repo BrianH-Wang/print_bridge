@@ -28,7 +28,7 @@ from ui.channel_list import ChannelListWidget
 from ui.constants import LEGACY_PROFILE_NAMES, DATA_ADDR
 from ui.dialogs import HttpResponseDialog
 from ui.helpers import normalize_addr
-from ui.panels import HistoryPanel, LogPanel, SelftestPanel
+from ui.panels import HistoryPanel, LogPanel, SelftestPanel, SimulatePanel
 from ui.printer_list import PrinterListWidget
 from ui.profiles import ProfileMixin
 from ui.server_control import ServerMixin
@@ -54,7 +54,8 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         names = [p["name"] for p in self.profiles]
         self.default_profile = self.settings.value("default_profile")
         if self.default_profile not in names:
-            # 方案刚被改过名（老的「默认」现在叫「单向获取数据」），跟着找过去
+            # 方案刚被改过名（老的「默认」现在叫「单向获取数据」），跟着找过去；
+            # 找不到就落到第一套，首次运行时第一套是「双向获取数据」
             self.default_profile = LEGACY_PROFILE_NAMES.get(self.default_profile, names[0])
         if self.default_profile not in names:
             self.default_profile = names[0]
@@ -112,6 +113,9 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         self.history_tab_index = self.tabs.addTab(self.history, "接收历史 📜")
         self.selftest = SelftestPanel(self.settings, self.selftest_context, self)
         self.tabs.addTab(self.selftest, "自测 🧪")
+        # 模拟设备和自测要的是同一份上下文：跑没跑、通道、端口
+        self.simulate = SimulatePanel(self.settings, self.selftest_context, self)
+        self.tabs.addTab(self.simulate, "模拟设备 📡")
         layout.addWidget(self.tabs, 1)
 
         self.setLayout(layout)
