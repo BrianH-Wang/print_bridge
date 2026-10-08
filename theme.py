@@ -200,6 +200,17 @@ QPushButton#secondary {{
 }}
 QPushButton#secondary:hover {{ background: {secondary_hover}; }}
 QPushButton#secondary:disabled {{ background: {disabled_bg}; color: {disabled_text}; }}
+/* 带下拉的次按钮（如模拟设备的「恢复默认」），和 QPushButton#secondary 一个样子 */
+QToolButton#secondary {{
+    border: none;
+    border-radius: 8px;
+    background: {secondary_bg};
+    color: {secondary_text};
+    font-weight: 500;
+    padding: 10px 30px 10px 16px;   /* 右边留出下拉箭头的位置 */
+}}
+QToolButton#secondary:hover {{ background: {secondary_hover}; }}
+QToolButton#secondary::menu-button {{ border: none; width: 22px; }}
 
 /* 主题切换：分段控件，沿用扁平按钮的视觉语言 */
 QWidget#segment {{ background: {seg_track}; border-radius: 9px; }}

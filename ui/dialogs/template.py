@@ -34,7 +34,7 @@ class TemplateDialog(QDialog):
         box.addWidget(tip)
 
         self.list = QListWidget()
-        self.list.setFixedHeight(96)
+        self.list.setFixedHeight(120)
         for name, description, _ in TEMPLATES:
             item = QListWidgetItem(f"{name}　—　{description}")
             item.setToolTip(description)

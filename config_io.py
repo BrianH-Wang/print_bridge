@@ -263,6 +263,28 @@ def _sorter_no_image_profile():
     }
 
 
+def oneway_profile():
+    """单向获取数据：/callback 一条，不配对、不转译，收到就原样推给前端、立刻回 200。
+
+    设备发的字段是 expressNo / weight / length / width / height / file，
+    名字已经是前端要的，所以不配 mapping，原样透传；file 是图片 base64，
+    历史里会自动认出来出缩略图。
+    """
+    return {
+        "name": "单向获取数据",
+        "ws_port": "8765",
+        "data_addr": "0.0.0.0:13213",
+        "enable_print": False,
+        "enable_data": True,
+        "printers": [],
+        "channels": [make_channel(
+            key="sorter_oneway", label="单向数据", path="/callback", flow=ONEWAY,
+            sample={"expressNo": "bt02062601", "weight": "18", "length": "25.2",
+                    "width": "22.4", "height": "17.2", "file": _TINY_PNG},
+        )],
+    }
+
+
 # (名字, 一句话说明, 造方案的函数)
 TEMPLATES = [
     ("空白起步", "一条兜底通道：任何路径都收，原样转给前端。"
@@ -275,6 +297,8 @@ TEMPLATES = [
                                 "应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，"
                                 "出错带具体原因。设备不传图或前端不要图时用这份。",
      _sorter_no_image_profile),
+    ("单向获取数据", "只有 /callback 一条（单向），字段 expressNo / weight / length / width / height / file，"
+                   "不配对、不转译，收到就原样推给前端、立刻回 200。", oneway_profile),
 ]
 
 

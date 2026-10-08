@@ -7,27 +7,36 @@
   · 有真前端连着就交给它回复，这里只看设备收到的应答
   · 没有前端时可以让内置假前端按「前端回复」里填的内容回，双向通道才有结果可看
 每次发送各走一个线程，配对通道可以先发主报文、不等它回来再发附加数据。
+
+编辑框的内容来源，优先级从高到低：刚改过的 > 用户「存为默认」的 > 内置样例。
+都按「方案 + 通道」分开存。图片可以直接选文件，转成 base64 填进请求体。
 """
+
+import base64
 
 import json
 import queue
 import threading
 import time
+from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QHBoxLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit,
-    QPushButton, QSplitter, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMenu,
+    QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QToolButton, QVBoxLayout, QWidget,
 )
 
 import selftest
-from channels import ANY_PATH, TWOWAY
+from channels import ANY_PATH, MAX_BODY_BYTES, TWOWAY
+from history_store import find_image_field
+from mapping import FILE_CHECK
 from pairing import ATTACH, NONE, pair_of, role_of
 from ui.constants import LOG_POLL_MS
 
-# 几何智造分拣设备的一组真实报文：数值和图片条码相同，能配上对。
-# 编辑框按路径取这里的默认值，没有的路径才退回通道配置里的样例。
-# 兜底通道（路径 *）什么都收，默认按数值接口 /callback 发
+# 各方案对应设备的真实报文。双向方案里数值和图片条码相同，能配上对。
+# 编辑框按「路径 + 样例的字段」挑这里的默认值：同是 /callback，双向方案发 code/重量体积，
+# 单向方案发 expressNo/重量体积/file，各发各的。字段对不上的退回通道配置里的样例；
+# 通道没样例时才只按路径挑。兜底通道（路径 *）什么都收，默认按数值接口 /callback 发
 DEVICE_CODE = "CC28092600002"
 DEVICE_IMAGE = (  # 132x132 PNG
     "iVBORw0KGgoAAAANSUhEUgAAAIQAAACECAYAAABRRIOnAAAAAXNSR0IArs4c6QAABptJREFUeF7tncuWGksMBIf//2i88cLd"
@@ -56,11 +65,17 @@ DEVICE_IMAGE = (  # 132x132 PNG
     "b0mBAkEKbWYvEJslnMItEKTQZvYCsVnCKdwCQQptZi8QmyWcwi0QpNBm9gKxWcIp3AJBCm1mLxCbJZzCLRCk0Gb2ArFZwinc"
     "AkEKbWYvEJslnML9A67zpvzJ4FoLAAAAAElFTkSuQmCC"
 )
-DEVICE_DEFAULTS = {
-    "/callback": {"code": DEVICE_CODE, "weight": "12.50", "height": "35.20",
-                  "width": "28.00", "length": "40.75"},
-    "/upload": {"code": DEVICE_CODE, "file": DEVICE_IMAGE},
-}
+DEFAULT_IMAGE_FIELD = "file"   # 「选择图片」填进的字段，界面上可改
+
+DEVICE_DEFAULTS = [
+    # 双向获取数据：/callback 数值 + /upload 图片
+    ("/callback", {"code": DEVICE_CODE, "weight": "12.50", "height": "35.20",
+                   "width": "28.00", "length": "40.75"}),
+    ("/upload", {"code": DEVICE_CODE, "file": DEVICE_IMAGE}),
+    # 单向获取数据：/callback 一条，数值和图片一起发
+    ("/callback", {"expressNo": "bt02062601", "weight": "18", "length": "25.2",
+                   "width": "22.4", "height": "17.2", "file": DEVICE_IMAGE}),
+]
 
 
 class SimulatePanel(QWidget):
@@ -70,7 +85,7 @@ class SimulatePanel(QWidget):
         super().__init__(parent)
         self.settings = settings
         self.context = context
-        self._keys = ()
+        self._keys = ()             # (方案名, 通道 key…)，变了才重排下拉
         self._loading = False       # 程序在回填编辑框，别当成用户改动存起来
         self.events = queue.Queue()
         self.pending = 0            # 还没回来的请求数
@@ -100,10 +115,37 @@ class SimulatePanel(QWidget):
         self.path_edit = QLineEdit()
         self.path_edit.setToolTip("默认是通道的路径，可以改成别的，比如故意打一个没配过的路径")
         row.addWidget(self.path_edit, 1)
-        self.sample_btn = QPushButton("填入样例")
+        row.addWidget(QLabel("图片字段:"))
+        self.image_field_edit = QLineEdit()
+        self.image_field_edit.setPlaceholderText(DEFAULT_IMAGE_FIELD)
+        self.image_field_edit.setMaximumWidth(120)
+        self.image_field_edit.setToolTip("选的图片转成 base64 后填进这个字段，按设备文档改成它要的字段名。"
+                                         "默认取请求体里已有的图片字段，或通道配置里校验文件的那个，都没有就是 file")
+        self.image_field_edit.textChanged.connect(
+            lambda: self._save_text("image_field", self.image_field_edit))
+        row.addWidget(self.image_field_edit)
+        self.image_btn = QPushButton("选择图片…")
+        self.image_btn.setObjectName("secondary")
+        self.image_btn.setToolTip("挑一个图片 / PDF 文件，转成 base64 填进左边那个字段")
+        self.image_btn.clicked.connect(self._pick_image)
+        row.addWidget(self.image_btn)
+        self.keep_btn = QPushButton("存为默认")
+        self.keep_btn.setObjectName("secondary")
+        self.keep_btn.setToolTip("把编辑框里现在的请求体和前端回复存成这个方案这条通道的默认，"
+                                 "以后「恢复默认」就回到这份，不再是内置样例")
+        self.keep_btn.clicked.connect(self._keep_default)
+        row.addWidget(self.keep_btn)
+        self.sample_btn = QToolButton()
         self.sample_btn.setObjectName("secondary")
-        self.sample_btn.setToolTip("把编辑框换回默认数据（分拣设备的真实报文，或通道配置里的样例）和回复样例")
+        self.sample_btn.setText("恢复默认")
+        self.sample_btn.setToolTip("把编辑框换回默认：存过默认的用存的那份，没存过用内置样例"
+                                   "（分拣设备的真实报文，或通道配置里的样例）")
+        self.sample_btn.setPopupMode(QToolButton.ToolButtonPopupMode.MenuButtonPopup)
         self.sample_btn.clicked.connect(self._fill_sample)
+        menu = QMenu(self.sample_btn)
+        menu.addAction("填入内置样例", lambda: self._fill_sample(builtin=True))
+        self.forget_action = menu.addAction("删除存的默认", self._forget_default)
+        self.sample_btn.setMenu(menu)
         row.addWidget(self.sample_btn)
         box.addLayout(row)
 
@@ -196,12 +238,14 @@ class SimulatePanel(QWidget):
         return next((c for c in self.context()["channels"] if c["key"] == key), None)
 
     def _setting_key(self, kind, channel_key):
-        return f"simulate/{kind}/{channel_key}"
+        # 带上方案名：两个方案里同名的通道发的东西不一样，改过的内容不能串
+        return f"simulate/{kind}/{self.context().get('profile', '')}/{channel_key}"
 
     def _refresh_channels(self):
         """通道换了（切方案、加减通道）就重排下拉，没换不动。"""
-        channels = self.context()["channels"]
-        keys = tuple(c["key"] for c in channels)
+        ctx = self.context()
+        channels = ctx["channels"]
+        keys = (ctx.get("profile", ""),) + tuple(c["key"] for c in channels)
         if keys == self._keys:
             return
         self._keys = keys
@@ -220,37 +264,127 @@ class SimulatePanel(QWidget):
         self._loading = True
         try:
             if channel is None:
+                self.image_field_edit.clear()
                 self.path_edit.clear()
                 self.body_edit.clear()
                 self.reply_edit.clear()
                 return
             self.path_edit.setText(_send_path(channel))
-            body, reply = self._sample_texts(channel)
-            self.body_edit.setPlainText(self.settings.value(self._setting_key("data", channel["key"]), "") or body)
-            self.reply_edit.setPlainText(self.settings.value(self._setting_key("reply", channel["key"]), "") or reply)
+            body, reply = self._texts_of(channel)
+            self.body_edit.setPlainText(body)
+            self.reply_edit.setPlainText(reply)
             self.reply_edit.setEnabled(self._twoway(channel))
+            try:
+                parsed = json.loads(body)
+            except ValueError:
+                parsed = None
+            self.image_field_edit.setText(
+                self.settings.value(self._setting_key("image_field", channel["key"]), "")
+                or _image_field(channel, parsed))
         finally:
             self._loading = False
+        self._refresh_default_state()
 
     def _sample_texts(self, channel):
-        sample = DEVICE_DEFAULTS.get(_send_path(channel)) or channel.get("sample")
+        sample = _device_default(channel)
         body = _dumps(sample) if sample else ""
         reply = _dumps(channel.get("reply_sample") or selftest.DEFAULT_REPLY)
         return body, reply
 
-    def _fill_sample(self):
+    def _default_texts(self, channel):
+        """「恢复默认」回到的内容：存过默认用存的，没存过用内置样例。"""
+        body, reply = self._sample_texts(channel)
+        return (self.settings.value(self._setting_key("default_data", channel["key"]), "") or body,
+                self.settings.value(self._setting_key("default_reply", channel["key"]), "") or reply)
+
+    def _has_default(self, channel):
+        return any(self.settings.value(self._setting_key(kind, channel["key"]), "")
+                   for kind in ("default_data", "default_reply"))
+
+    def _refresh_default_state(self):
+        channel = self._current_channel()
+        kept = channel is not None and self._has_default(channel)
+        self.forget_action.setEnabled(kept)
+        self.sample_btn.setText("恢复默认（已存）" if kept else "恢复默认")
+
+    def _fill_sample(self, builtin=False):
         channel = self._current_channel()
         if channel is None:
             return
         self.settings.remove(self._setting_key("data", channel["key"]))
         self.settings.remove(self._setting_key("reply", channel["key"]))
         self._load_editors()
+        if builtin:
+            # 不经 _loading，当成一次改动存下来；存的默认留着，下次「恢复默认」还能回去
+            body, reply = self._sample_texts(channel)
+            self.body_edit.setPlainText(body)
+            self.reply_edit.setPlainText(reply)
+
+    def _keep_default(self):
+        channel = self._current_channel()
+        if channel is None:
+            return
+        body = self.body_edit.toPlainText()
+        try:
+            json.loads(body)
+        except ValueError as e:
+            QMessageBox.warning(self, "存为默认", f"请求体不是合法 JSON，没有存：{e}")
+            return
+        self.settings.setValue(self._setting_key("default_data", channel["key"]), body)
+        self.settings.setValue(self._setting_key("default_reply", channel["key"]), self.reply_edit.toPlainText())
+        self._refresh_default_state()
+        self._append(f"💾 已把当前内容存为 {channel['key']} 的默认")
+
+    def _forget_default(self):
+        channel = self._current_channel()
+        if channel is None:
+            return
+        self.settings.remove(self._setting_key("default_data", channel["key"]))
+        self.settings.remove(self._setting_key("default_reply", channel["key"]))
+        self._refresh_default_state()
+        self._append(f"🗑 已删除 {channel['key']} 存的默认，「恢复默认」回到内置样例")
+
+    def _pick_image(self):
+        """选个文件，转成 base64 填进请求体的图片字段。"""
+        channel = self._current_channel()
+        if channel is None:
+            return
+        try:
+            body = json.loads(self.body_edit.toPlainText() or "{}")
+        except ValueError as e:
+            QMessageBox.warning(self, "选择图片", f"请求体不是合法 JSON，先改好再选图片：{e}")
+            return
+        if not isinstance(body, dict):
+            QMessageBox.warning(self, "选择图片", "请求体最外层不是 JSON 对象，没地方放图片")
+            return
+        path, _ = QFileDialog.getOpenFileName(
+            self, "选择图片", self.settings.value("simulate/image_dir", "") or "",
+            "图片 / PDF (*.png *.jpg *.jpeg *.bmp *.gif *.webp *.pdf);;所有文件 (*)",
+        )
+        if not path:
+            return
+        self.settings.setValue("simulate/image_dir", str(Path(path).parent))
+        try:
+            raw = Path(path).read_bytes()
+        except OSError as e:
+            QMessageBox.warning(self, "选择图片", f"读不了这个文件：{e}")
+            return
+        encoded = base64.b64encode(raw).decode("ascii")
+        if len(encoded) > MAX_BODY_BYTES:
+            QMessageBox.warning(self, "选择图片",
+                                f"转成 base64 后 {len(encoded)} 字节，超过服务的请求体上限 {MAX_BODY_BYTES}，发不出去")
+            return
+        field = self.image_field_edit.text().strip() or DEFAULT_IMAGE_FIELD
+        body[field] = encoded
+        self.body_edit.setPlainText(_dumps(body))
+        self._append(f"🖼 已把 {Path(path).name}（{len(raw)} 字节，base64 {len(encoded)} 字符）填进 {field}")
 
     def _save_text(self, kind, edit):
         channel = self._current_channel()
         if self._loading or channel is None:
             return
-        self.settings.setValue(self._setting_key(kind, channel["key"]), edit.toPlainText())
+        text = edit.text() if isinstance(edit, QLineEdit) else edit.toPlainText()
+        self.settings.setValue(self._setting_key(kind, channel["key"]), text)
 
     @staticmethod
     def _twoway(channel):
@@ -329,8 +463,8 @@ class SimulatePanel(QWidget):
                 if c["key"] != channel["key"] and role_of(c) != NONE and pair_of(c)["group"] == group]
 
     def _texts_of(self, channel):
-        """某条通道编辑框里会显示的内容：改过的用改过的，没改过用默认。"""
-        body, reply = self._sample_texts(channel)
+        """某条通道编辑框里会显示的内容：改过的用改过的，没改过用默认（存的或内置）。"""
+        body, reply = self._default_texts(channel)
         return (self.settings.value(self._setting_key("data", channel["key"]), "") or body,
                 self.settings.value(self._setting_key("reply", channel["key"]), "") or reply)
 
@@ -458,6 +592,26 @@ class SimulatePanel(QWidget):
 def _send_path(channel):
     """编辑框里默认填的路径：兜底通道没有固定路径，按设备的数值接口发。"""
     return "/callback" if channel["path"] == ANY_PATH else channel["path"]
+
+
+def _device_default(channel):
+    """编辑框的默认请求体：路径和样例字段都对得上的真实报文，没有就用通道自己的样例。"""
+    path, sample = _send_path(channel), channel.get("sample")
+    for where, body in DEVICE_DEFAULTS:
+        if where == path and (not sample or set(sample) == set(body)):
+            return body
+    return sample
+
+
+def _image_field(channel, body):
+    """图片字段的初始值：请求体里已经是图片的 > 通道映射里校验文件的源字段 > file。"""
+    found = find_image_field(body)
+    if found:
+        return found[0]
+    for field in ((channel.get("mapping") or {}).get("fields") or []):
+        if (field.get("check") or {}).get("type") == FILE_CHECK and field.get("source"):
+            return field["source"]
+    return DEFAULT_IMAGE_FIELD
 
 
 def _dumps(value):

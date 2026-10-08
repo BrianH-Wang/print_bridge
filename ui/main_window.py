@@ -133,9 +133,10 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         )
 
     def selftest_context(self):
-        """自测页签要的东西：跑没跑、当前通道、应答表、两个端口。"""
+        """自测 / 模拟设备页签要的东西：跑没跑、当前方案和通道、应答表、两个端口。"""
         return {
             "running": self.running,
+            "profile": self.current_profile,
             "enable_data": self.data_checkbox.isChecked(),
             "channels": list(self.channel_list.channels),
             "http_responses": self.http_responses,

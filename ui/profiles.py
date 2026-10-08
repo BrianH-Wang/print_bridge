@@ -9,7 +9,10 @@ from pathlib import Path
 
 from PyQt6.QtWidgets import QDialog, QFileDialog, QInputDialog, QMessageBox
 
-from config_io import build_export, bundled_configs_dir, dumps, parse_import, sorter_profile
+from channels import ANY_PATH, DEFAULT_CHANNEL_KEY, make_channel
+from config_io import (
+    build_export, bundled_configs_dir, dumps, oneway_profile, parse_import, sorter_profile,
+)
 from logger import print_log
 from printer_utils import (
     DEFAULT_PRINTER_KEY, SYSTEM_PRINTER, get_available_printers, make_printer,
@@ -20,6 +23,10 @@ from ui.constants import (
 from ui.dialogs.template import SAVE as TEMPLATE_SAVE
 from ui.dialogs.template import TemplateDialog
 from ui.helpers import normalize_addr, sanitize_channels, sanitize_printers
+
+
+# 老版本首次运行建的「单向获取数据」原封不动时的通道，读方案时认出来就升级
+_OLD_ONEWAY_CHANNELS = [make_channel(key=DEFAULT_CHANNEL_KEY, label="默认", path=ANY_PATH)]
 
 
 class ProfileMixin:
@@ -39,7 +46,7 @@ class ProfileMixin:
             print_log("⚠️ 配置方案读取失败，已重置为默认方案")
             items = []
 
-        names = set()
+        names, upgraded = set(), False
         for item in items if isinstance(items, list) else []:
             if not isinstance(item, dict):
                 continue
@@ -52,7 +59,14 @@ class ProfileMixin:
             if not name or name in names:
                 continue
             names.add(name)
-            profiles.append(self._sanitize_profile(name, item))
+            profile = self._sanitize_profile(name, item)
+            if name == ONEWAY_PROFILE_NAME and profile["channels"] == _OLD_ONEWAY_CHANNELS:
+                # 老版本建的单向方案只有一条没样例的兜底通道，用户也没动过：
+                # 换成现在的 /callback 单向通道，模拟设备才有对的报文可发
+                profile["channels"] = sanitize_channels(oneway_profile())
+                print_log(f"🔧 方案「{name}」的接收通道已更新为 /callback 单向")
+                upgraded = True
+            profiles.append(profile)
 
         if not profiles:
             # 首次运行：排第一的就是 ★ 默认方案——双向获取数据（几何智造分拣设备模板）
@@ -63,11 +77,12 @@ class ProfileMixin:
             queues, default_queue = get_available_printers()
             seed = [make_printer(DEFAULT_PRINTER_KEY, "默认", SYSTEM_PRINTER,
                                  queue=default_queue or (queues[0] if queues else ""))]
-            profiles.append(self._sanitize_profile(ONEWAY_PROFILE_NAME, {
-                "ws_port": "8765",
-                "data_addr": addr,
-                "printers": seed if (queues or default_queue) else [],
-            }))
+            oneway = oneway_profile()
+            oneway["data_addr"] = addr
+            oneway["printers"] = seed if (queues or default_queue) else []
+            profiles.append(self._sanitize_profile(ONEWAY_PROFILE_NAME, oneway))
+        if upgraded:   # 存回去，下次启动不用再认一遍
+            self.settings.setValue("profiles", json.dumps(profiles[:MAX_PROFILES], ensure_ascii=False))
         return profiles[:MAX_PROFILES]
 
     @staticmethod
