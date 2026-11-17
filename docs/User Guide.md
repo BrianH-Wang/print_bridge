@@ -214,6 +214,10 @@ it acknowledges on receipt and is not pushed to the page on its own.
 
 Clicking "Start server" checks that pairing is complete. If half is missing you are told exactly what.
 
+**No waiting, each endpoint on its own**: set the role on both channels to "**不参与**" (Not paired).
+Whichever arrives is pushed to the page immediately, the main data never waits for the attachment, and the page matches them by business number itself.
+The 几何智造 sorter templates come in both forms: "几何智造分拣设备" keeps the two separate, "几何智造分拣设备（图片配对）" merges them into one.
+
 ### 4.6 The reply to upstream has the wrong format
 
 Upstream's API document dictates the field names and status codes in the reply. If the defaults don't match:

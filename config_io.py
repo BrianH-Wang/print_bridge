@@ -170,6 +170,9 @@ _UPLOAD_RESPONSES = {
     "file_too_large": {"code": 413, "message": "文件超过 2M 限制：{error}"},
     "file_invalid": {"code": 415, "message": "文件解析失败：{error}"},
 }
+# 图片单独推给前端时的消息 type，和数值的 external_data 分开
+IMAGE_MESSAGE_TYPE = "external_image"
+
 _UPLOAD_FILE_CHECK = {"type": "file", "max_bytes": 2 * 1024 * 1024, "formats": ["jpg", "png", "pdf"]}
 # 文档 2.4.1 里那张 1x1 PNG，样例和自测都用它
 _TINY_PNG = ("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk"
@@ -222,10 +225,46 @@ def _sorter_data_channel(pair=None, timeout=DEFAULT_REPLY_TIMEOUT):
     )
 
 
+def _sorter_image_channel(pair=None):
+    """几何智造的 /upload：条码 + 图片，单向，收下就回。
+
+    不配对时收到就单独推给前端，type 是 external_image，前端一看就知道这条是图片，
+    再按 shipmentCode 自己对上数值那条；
+    配对时存进暂存区，等 /callback 来了合成一条再推（用的是 /callback 的 external_data）。
+    """
+    return make_channel(
+        key="sorter_image", label="分拣图片", path="/upload",
+        flow=ONEWAY,
+        mapping=make_mapping(PICK, [
+            {"source": "code", "target": "shipmentCode", "required": True},
+            {"source": "file", "target": "imageBase64", "required": True,
+             "check": _UPLOAD_FILE_CHECK},
+        ]),
+        pair=pair,
+        outbound=None if pair else make_outbound(message_type=IMAGE_MESSAGE_TYPE),
+        envelope=_DEVICE_ENVELOPE,
+        responses=_UPLOAD_RESPONSES,
+        sample={"code": "CCSL2026083100123", "file": _TINY_PNG},
+    )
+
+
 def sorter_profile():
-    """几何智造分拣设备：图片 + 数值两条链接，按条码配对成一条。"""
+    """几何智造分拣设备：/callback、/upload 各走各的，谁到了就推谁，不互相等。"""
     return {
         "name": "双向获取数据",
+        "ws_port": "8765",
+        "data_addr": "0.0.0.0:13213",
+        "enable_print": False,
+        "enable_data": True,
+        "printers": [make_printer(key="label", label="标签")],
+        "channels": [_sorter_data_channel(), _sorter_image_channel()],
+    }
+
+
+def sorter_paired_profile():
+    """几何智造分拣设备（图片配对）：两条链接按条码配对，数值等图片合成一条再推。"""
+    return {
+        "name": "双向获取数据（图片配对）",
         "ws_port": "8765",
         "data_addr": "0.0.0.0:13213",
         "enable_print": False,
@@ -235,19 +274,7 @@ def sorter_profile():
             # 先等图最多 1 秒，再等前端回复，两段共用 3 秒：前端至少还有 2 秒
             _sorter_data_channel(pair=make_pair(PRIMARY, "parcel", field="shipmentCode", wait=1),
                                  timeout=3),
-            make_channel(
-                key="sorter_image", label="分拣图片", path="/upload",
-                flow=ONEWAY,
-                mapping=make_mapping(PICK, [
-                    {"source": "code", "target": "shipmentCode", "required": True},
-                    {"source": "file", "target": "imageBase64", "required": True,
-                     "check": _UPLOAD_FILE_CHECK},
-                ]),
-                pair=make_pair(ATTACH, "parcel", field="shipmentCode", keep=60),
-                envelope=_DEVICE_ENVELOPE,
-                responses=_UPLOAD_RESPONSES,
-                sample={"code": "CCSL2026083100123", "file": _TINY_PNG},
-            ),
+            _sorter_image_channel(pair=make_pair(ATTACH, "parcel", field="shipmentCode", keep=60)),
         ],
     }
 
@@ -291,10 +318,14 @@ def oneway_profile():
 TEMPLATES = [
     ("空白起步", "一条兜底通道：任何路径都收，原样转给前端。"
                 "适合从零开始，照着填自己的接口。", _blank_profile),
-    ("几何智造分拣设备", "两条链接：/callback 收数值（双向，等前端回分拣格口）、"
-                        "/upload 收图片（单向）。按条码配对合成一条。"
+    ("几何智造分拣设备", "两条链接各走各的：/callback 收数值（双向，等前端回分拣格口）、"
+                        "/upload 收图片（单向），谁到了就推谁，不互相等。推给前端时数值的 type 是 external_data、"
+                        "图片是 external_image，前端按 shipmentCode 自己对上。"
                         "应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，"
                         "出错带具体原因；图片超 2M 回 413、解不开回 415。", sorter_profile),
+    ("几何智造分拣设备（图片配对）", "和上面同样两条链接，但按条码配对：/callback 先等同一单的图片"
+                                "（最多 1 秒，等不到按缺项照发），合成一条再推给前端，前端一次拿到数值和图。"
+                                "超时 3 秒，前端至少有 2 秒回复。", sorter_paired_profile),
     ("几何智造分拣设备（无图片）", "只有 /callback 一条（双向，等前端回分拣格口），不配对、收到就推。"
                                 "应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，"
                                 "出错带具体原因。设备不传图或前端不要图时用这份。",

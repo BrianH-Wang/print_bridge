@@ -1,7 +1,7 @@
 {
   "print-bridge-config": 1,
-  "exported_at": "2026-11-17 11:22:22",
-  "note": "两条链接：/callback 收数值（双向，等前端回分拣格口）、/upload 收图片（单向）。按条码配对合成一条。应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，出错带具体原因；图片超 2M 回 413、解不开回 415。",
+  "exported_at": "2026-11-17 14:52:34",
+  "note": "两条链接各走各的：/callback 收数值（双向，等前端回分拣格口）、/upload 收图片（单向），谁到了就推谁，不互相等。推给前端时数值的 type 是 external_data、图片是 external_image，前端按 shipmentCode 自己对上。应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，出错带具体原因；图片超 2M 回 413、解不开回 415。",
   "profile": {
     "name": "双向获取数据",
     "ws_port": "8765",
@@ -25,7 +25,7 @@
         "label": "分拣数值",
         "path": "/callback",
         "flow": "twoway",
-        "timeout": 3.0,
+        "timeout": 2.0,
         "dispatch": "concurrent",
         "envelope": {
           "success": "{{__success}}",
@@ -104,17 +104,7 @@
           "width": "28.00",
           "length": "40.75"
         },
-        "pair": {
-          "role": "primary",
-          "group": "parcel",
-          "field": "shipmentCode",
-          "value": "",
-          "rename": "",
-          "wait": 1.0,
-          "keep": 60.0,
-          "on_missing": "send_partial",
-          "max_pending": 200
-        },
+        "pair": null,
         "reply_sample": {
           "route": "A",
           "totalCount": 100,
@@ -180,22 +170,17 @@
             }
           ]
         },
-        "outbound": null,
+        "outbound": {
+          "envelope": "standard",
+          "type": "external_image",
+          "extra": {},
+          "template": null
+        },
         "sample": {
           "code": "CCSL2026083100123",
           "file": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
         },
-        "pair": {
-          "role": "attach",
-          "group": "parcel",
-          "field": "shipmentCode",
-          "value": "",
-          "rename": "",
-          "wait": 1.0,
-          "keep": 60.0,
-          "on_missing": "send_partial",
-          "max_pending": 200
-        },
+        "pair": null,
         "reply_sample": null,
         "reply_raw": false
       }

@@ -1,0 +1,205 @@
+{
+  "print-bridge-config": 1,
+  "exported_at": "2026-11-17 14:52:34",
+  "note": "和上面同样两条链接，但按条码配对：/callback 先等同一单的图片（最多 1 秒，等不到按缺项照发），合成一条再推给前端，前端一次拿到数值和图。超时 3 秒，前端至少有 2 秒回复。",
+  "profile": {
+    "name": "双向获取数据（图片配对）",
+    "ws_port": "8765",
+    "data_addr": "0.0.0.0:13213",
+    "enable_print": false,
+    "enable_data": true,
+    "printers": [
+      {
+        "key": "label",
+        "label": "标签",
+        "kind": "system",
+        "queue": "",
+        "host": "",
+        "port": 9100,
+        "timeout": 10.0
+      }
+    ],
+    "channels": [
+      {
+        "key": "sorter_data",
+        "label": "分拣数值",
+        "path": "/callback",
+        "flow": "twoway",
+        "timeout": 3.0,
+        "dispatch": "concurrent",
+        "envelope": {
+          "success": "{{__success}}",
+          "code": "{{__code}}",
+          "msg": "{{__message}}",
+          "data": "{{__data}}"
+        },
+        "http_status": "follow_code",
+        "responses": {
+          "ok": {
+            "message": "操作成功"
+          },
+          "ok_reply": {
+            "message": "操作成功"
+          }
+        },
+        "mapping": {
+          "mode": "pick",
+          "on_missing": "error",
+          "fields": [
+            {
+              "source": "code",
+              "target": "shipmentCode",
+              "transforms": [],
+              "required": true,
+              "default": null,
+              "check": null
+            },
+            {
+              "source": "weight",
+              "target": "weight",
+              "transforms": [
+                "number"
+              ],
+              "required": false,
+              "default": null,
+              "check": null
+            },
+            {
+              "source": "length",
+              "target": "length",
+              "transforms": [
+                "number"
+              ],
+              "required": false,
+              "default": null,
+              "check": null
+            },
+            {
+              "source": "width",
+              "target": "width",
+              "transforms": [
+                "number"
+              ],
+              "required": false,
+              "default": null,
+              "check": null
+            },
+            {
+              "source": "height",
+              "target": "height",
+              "transforms": [
+                "number"
+              ],
+              "required": false,
+              "default": null,
+              "check": null
+            }
+          ]
+        },
+        "outbound": null,
+        "sample": {
+          "code": "CCSL2026083100123",
+          "weight": "12.50",
+          "height": "35.20",
+          "width": "28.00",
+          "length": "40.75"
+        },
+        "pair": {
+          "role": "primary",
+          "group": "parcel",
+          "field": "shipmentCode",
+          "value": "",
+          "rename": "",
+          "wait": 1.0,
+          "keep": 60.0,
+          "on_missing": "send_partial",
+          "max_pending": 200
+        },
+        "reply_sample": {
+          "route": "A",
+          "totalCount": 100,
+          "currentCount": 1,
+          "mainOrderNo": "MO2026083100123"
+        },
+        "reply_raw": true
+      },
+      {
+        "key": "sorter_image",
+        "label": "分拣图片",
+        "path": "/upload",
+        "flow": "oneway",
+        "timeout": 2.0,
+        "dispatch": "concurrent",
+        "envelope": {
+          "success": "{{__success}}",
+          "code": "{{__code}}",
+          "msg": "{{__message}}",
+          "data": "{{__data}}"
+        },
+        "http_status": "follow_code",
+        "responses": {
+          "ok": {
+            "message": "操作成功"
+          },
+          "file_too_large": {
+            "code": 413,
+            "message": "文件超过 2M 限制：{error}"
+          },
+          "file_invalid": {
+            "code": 415,
+            "message": "文件解析失败：{error}"
+          }
+        },
+        "mapping": {
+          "mode": "pick",
+          "on_missing": "error",
+          "fields": [
+            {
+              "source": "code",
+              "target": "shipmentCode",
+              "transforms": [],
+              "required": true,
+              "default": null,
+              "check": null
+            },
+            {
+              "source": "file",
+              "target": "imageBase64",
+              "transforms": [],
+              "required": true,
+              "default": null,
+              "check": {
+                "type": "file",
+                "max_bytes": 2097152,
+                "formats": [
+                  "jpg",
+                  "png",
+                  "pdf"
+                ]
+              }
+            }
+          ]
+        },
+        "outbound": null,
+        "sample": {
+          "code": "CCSL2026083100123",
+          "file": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
+        },
+        "pair": {
+          "role": "attach",
+          "group": "parcel",
+          "field": "shipmentCode",
+          "value": "",
+          "rename": "",
+          "wait": 1.0,
+          "keep": 60.0,
+          "on_missing": "send_partial",
+          "max_pending": 200
+        },
+        "reply_sample": null,
+        "reply_raw": false
+      }
+    ]
+  },
+  "http_responses": {}
+}

@@ -6,7 +6,10 @@
 前端那一侧：
   · 有真前端连着就交给它回复，这里只看设备收到的应答
   · 没有前端时可以让内置假前端按「前端回复」里填的内容回，双向通道才有结果可看
-每次发送各走一个线程，配对通道可以先发主报文、不等它回来再发附加数据。
+每次发送各走一个线程，前一条还在等应答，下一条照样能发。
+
+「按顺序连发」：先发 A，隔几秒发 B，再隔几秒发 C……顺序和间隔在「设置顺序」里配，
+按方案分开存。每一步发的是那条通道编辑框里的内容；可以选等上一条应答回来再开始计时。
 
 编辑框的内容来源，优先级从高到低：刚改过的 > 用户「存为默认」的 > 内置样例。
 都按「方案 + 通道」分开存。图片可以直接选文件，转成 base64 填进请求体。
@@ -22,16 +25,18 @@ from pathlib import Path
 
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import (
-    QCheckBox, QComboBox, QDoubleSpinBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMenu,
-    QMessageBox, QPlainTextEdit, QPushButton, QSplitter, QToolButton, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QHBoxLayout, QLabel, QLineEdit, QMenu,
+    QMessageBox, QPlainTextEdit, QPushButton, QSizePolicy, QSplitter, QToolButton, QVBoxLayout,
+    QWidget,
 )
 
 import selftest
 from channels import ANY_PATH, MAX_BODY_BYTES, TWOWAY
 from history_store import find_image_field
 from mapping import FILE_CHECK
-from pairing import ATTACH, NONE, pair_of, role_of
+from pairing import ATTACH, role_of
 from ui.constants import LOG_POLL_MS
+from ui.dialogs.send_chain import DEFAULT_DELAY, SendChainDialog, describe_chain
 
 # 各方案对应设备的真实报文。双向方案里数值和图片条码相同，能配上对。
 # 编辑框按「路径 + 样例的字段」挑这里的默认值：同是 /callback，双向方案发 code/重量体积，
@@ -161,23 +166,19 @@ class SimulatePanel(QWidget):
         self.tag_check.setToolTip("不勾就和真设备一模一样：记日志、进接收历史")
         self.tag_check.toggled.connect(lambda on: self.settings.setValue("simulate/tagged", on))
         opts.addWidget(self.tag_check)
-        self.pair_check = QCheckBox("连同配对通道一起发")
-        self.pair_check.setChecked(self.settings.value("simulate/pair", True, type=bool))
-        self.pair_check.setToolTip("当前通道在配对组里时，组里其他通道（如 /callback 配 /upload）"
-                                   "也按各自编辑框里的内容发出去，和真设备一样各走各的连接")
-        self.pair_check.toggled.connect(self._on_pair_toggled)
-        opts.addWidget(self.pair_check)
-        opts.addWidget(QLabel("间隔"))
-        self.gap_spin = QDoubleSpinBox()
-        self.gap_spin.setRange(0, 30)
-        self.gap_spin.setDecimals(1)
-        self.gap_spin.setSingleStep(0.1)
-        self.gap_spin.setSuffix(" 秒")
-        self.gap_spin.setValue(self.settings.value("simulate/gap", 0.5, type=float))
-        self.gap_spin.setToolTip("当前通道先发，隔这么久再发下一条；0 就是同时发")
-        self.gap_spin.valueChanged.connect(lambda v: self.settings.setValue("simulate/gap", v))
-        opts.addWidget(self.gap_spin)
-        opts.addStretch()
+        self.chain_check = QCheckBox("按顺序连发")
+        self.chain_check.setToolTip("先发 A，隔几秒发 B，再隔几秒发 C……顺序和间隔点「设置顺序」配")
+        self.chain_check.toggled.connect(self._on_chain_toggled)
+        opts.addWidget(self.chain_check)
+        self.chain_btn = QPushButton("设置顺序…")
+        self.chain_btn.setObjectName("secondary")
+        self.chain_btn.clicked.connect(self._edit_chain)
+        opts.addWidget(self.chain_btn)
+        self.chain_label = QLabel()
+        self.chain_label.setObjectName("hint")
+        # 步骤多了这行会很长：让它被截，别把整个窗口撑宽（全文在提示里）
+        self.chain_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+        opts.addWidget(self.chain_label, 1)
         self.clear_btn = QPushButton("清空记录")
         self.clear_btn.setObjectName("secondary")
         self.clear_btn.clicked.connect(lambda: self.output.clear())
@@ -257,6 +258,11 @@ class SimulatePanel(QWidget):
         index = self.channel_combo.findData(current)
         self.channel_combo.setCurrentIndex(index if index >= 0 else 0)
         self.channel_combo.blockSignals(False)
+        # 连发开没开也按方案记：切过去是那个方案上次的样子
+        self.chain_check.blockSignals(True)
+        self.chain_check.setChecked(self.settings.value(
+            f"simulate/chain_on/{ctx.get('profile', '')}", False, type=bool))
+        self.chain_check.blockSignals(False)
         self._load_editors()
 
     def _load_editors(self):
@@ -403,16 +409,19 @@ class SimulatePanel(QWidget):
         else:
             base_url, _ = selftest.endpoints(ctx)
             text = (f"像真设备一样把下面的 JSON POST 到 {base_url}，不做核对，只把来回的报文记下来。"
-                    "配对通道勾上「连同配对通道一起发」就整组发；也可以一条条手动发，前一条还在等，下一条照样能发。")
+                    "勾上「按顺序连发」就按设好的顺序一条接一条发（先 A、隔几秒 B……）；"
+                    "也可以一条条手动发，前一条还在等，下一条照样能发。")
             if self.pending:
                 text += f"　（{self.pending} 条等应答中）"
         self.hint.setText(text)
         ok = ctx["running"] and ctx["enable_data"]
         channel = self._current_channel()
         self.send_btn.setEnabled(ok and channel is not None)
-        partners = self._partners(channel) if channel is not None and self.pair_check.isChecked() else []
-        self.send_btn.setText(f"一起发送（{len(partners) + 1} 条）" if partners else "发送")
-        self.gap_spin.setEnabled(bool(partners))
+        chain_on = self.chain_check.isChecked()
+        steps, wait_answer = self._chain()
+        self.chain_label.setText(describe_chain(steps, wait_answer) if chain_on else "")
+        self.chain_label.setToolTip(self.chain_label.text())
+        self.send_btn.setText(f"按顺序发送（{len(steps)} 条）" if chain_on else "发送")
         if not ctx["running"]:
             self._stop_frontend()
 
@@ -424,15 +433,31 @@ class SimulatePanel(QWidget):
         path = self.path_edit.text().strip() or "/"
         if not path.startswith("/"):
             path = "/" + path
-        jobs = [(channel, path, self.body_edit.toPlainText(), self.reply_edit.toPlainText())]
-        if self.pair_check.isChecked():
-            for other in self._partners(channel):
-                body_text, reply_text = self._texts_of(other)
-                jobs.append((other, _send_path(other), body_text, reply_text))
+        current = (channel, path, self.body_edit.toPlainText(), self.reply_edit.toPlainText(), 0)
+        wait_answer = False
+        if self.chain_check.isChecked():
+            steps, wait_answer = self._chain()
+            by_key = {c["key"]: c for c in ctx["channels"]}
+            missing = [s["key"] for s in steps if s["key"] not in by_key]
+            if missing:
+                QMessageBox.warning(self, "连发顺序", f"方案里已经没有通道 {'、'.join(missing)}，"
+                                                     "点「设置顺序」改一下")
+                return
+            jobs = []
+            for step in steps:
+                other = by_key[step["key"]]
+                if other["key"] == channel["key"]:
+                    # 正在看的这条用编辑框里的（包括改过的路径）
+                    jobs.append(current[:4] + (step["delay"],))
+                else:
+                    body_text, reply_text = self._texts_of(other)
+                    jobs.append((other, _send_path(other), body_text, reply_text, step["delay"]))
+        else:
+            jobs = [current]
 
         # 先全部解析一遍，有一条不对就一条都不发，免得只发出去半组
         parsed = []
-        for job_channel, job_path, body_text, reply_text in jobs:
+        for job_channel, job_path, body_text, reply_text, delay in jobs:
             who = f"[{job_channel['key']}] " if len(jobs) > 1 else ""
             try:
                 body = json.loads(body_text)
@@ -447,20 +472,65 @@ class SimulatePanel(QWidget):
                 except ValueError as e:
                     QMessageBox.warning(self, "前端回复", f"{who}不是合法 JSON：{e}")
                     return
-            parsed.append((job_channel, job_path, body, reply))
+            parsed.append((job_channel, job_path, body, reply, delay))
 
-        gap = self.gap_spin.value()
-        for i, (job_channel, job_path, body, reply) in enumerate(parsed):
-            self._fire(ctx, job_channel, job_path, body, reply, delay=gap * i)
+        if wait_answer:
+            self._run_in_turn(ctx, parsed)
+        else:
+            # 按时间点发：第 n 步在前面所有间隔加起来那一刻发出，不管前面回没回
+            at = 0.0
+            for job_channel, job_path, body, reply, delay in parsed:
+                at += delay
+                self._fire(ctx, job_channel, job_path, body, reply, delay=at)
         self._refresh()
 
-    def _partners(self, channel):
-        """同一配对组里的其他通道，按方案里的顺序。"""
-        if role_of(channel) == NONE:
-            return []
-        group = pair_of(channel)["group"]
-        return [c for c in self.context()["channels"]
-                if c["key"] != channel["key"] and role_of(c) != NONE and pair_of(c)["group"] == group]
+    def _run_in_turn(self, ctx, parsed):
+        """等上一条应答回来，再隔 delay 秒发下一条。整串在一个线程里排着跑。"""
+        works = []
+        for i, (job_channel, job_path, body, reply, delay) in enumerate(parsed):
+            note = f"（上一条应答后 {delay:g}s 发）" if i else ""
+            works.append((delay, self._fire(ctx, job_channel, job_path, body, reply,
+                                            note=note, start=False)))
+
+        def run():
+            for delay, work in works:
+                if delay:
+                    time.sleep(delay)
+                work()
+
+        threading.Thread(target=run, daemon=True).start()
+
+    # ------------------------------------------------------------------ #
+    # 连发顺序
+    # ------------------------------------------------------------------ #
+
+    def _chain_key(self):
+        return f"simulate/chain/{self.context().get('profile', '')}"
+
+    def _chain(self):
+        """(步骤, 是否等应答)。没配过时默认把方案里的通道按顺序排一遍，间隔 DEFAULT_DELAY。"""
+        try:
+            saved = json.loads(self.settings.value(self._chain_key(), "") or "null")
+        except ValueError:
+            saved = None
+        if isinstance(saved, dict) and saved.get("steps"):
+            return saved["steps"], bool(saved.get("wait"))
+        channels = self.context()["channels"]
+        return [{"key": c["key"], "delay": 0 if i == 0 else DEFAULT_DELAY}
+                for i, c in enumerate(channels)], False
+
+    def _edit_chain(self):
+        steps, wait_answer = self._chain()
+        dialog = SendChainDialog(self.context()["channels"], steps, wait_answer, self)
+        if dialog.exec():
+            self.settings.setValue(self._chain_key(), json.dumps(
+                {"steps": dialog.steps(), "wait": dialog.wait_answer()}, ensure_ascii=False))
+            self.chain_check.setChecked(True)
+            self._refresh()
+
+    def _on_chain_toggled(self, on):
+        self.settings.setValue(f"simulate/chain_on/{self.context().get('profile', '')}", on)
+        self._refresh()
 
     def _texts_of(self, channel):
         """某条通道编辑框里会显示的内容：改过的用改过的，没改过用默认（存的或内置）。"""
@@ -468,8 +538,11 @@ class SimulatePanel(QWidget):
         return (self.settings.value(self._setting_key("data", channel["key"]), "") or body,
                 self.settings.value(self._setting_key("reply", channel["key"]), "") or reply)
 
-    def _fire(self, ctx, channel, path, body, reply, delay=0.0):
-        """发一条，各走各的线程；delay 秒之后才真正发出去。"""
+    def _fire(self, ctx, channel, path, body, reply, delay=0.0, note="", start=True):
+        """发一条，各走各的线程；delay 秒之后才真正发出去。
+
+        start=False 时不起线程，把要跑的函数交回去，由调用方排着顺序跑（连发等应答时用）。
+        """
         if reply is not None:
             with self._frontend_lock:
                 self._replies[channel["key"]] = reply
@@ -481,7 +554,7 @@ class SimulatePanel(QWidget):
         self._seq += 1
         seq = self._seq
         self.pending += 1
-        when = f"（{delay:g}s 后发）" if delay else ""
+        when = note or (f"（{delay:g}s 后发）" if delay else "")
         self._append(f"#{seq}  {time.strftime('%H:%M:%S')}  POST {path}（{channel['key']}）{when}\n"
                      f"{_dumps_short(body)}")
 
@@ -503,11 +576,9 @@ class SimulatePanel(QWidget):
             except Exception as e:
                 self.events.put(("answer", (seq, {"error": str(e)}, None)))
 
+        if not start:
+            return work
         threading.Thread(target=work, daemon=True).start()
-
-    def _on_pair_toggled(self, on):
-        self.settings.setValue("simulate/pair", on)
-        self._refresh()
 
     def _ensure_frontend(self, base_url, ws_url):
         """没有真前端时起一个假前端并一直留着；有了真前端就让位。在工作线程里调。"""
