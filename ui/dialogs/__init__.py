@@ -5,10 +5,11 @@ from ui.dialogs.channel import ChannelDialog
 from ui.dialogs.history_search import HistorySearchDialog
 from ui.dialogs.http_response import HttpResponseDialog
 from ui.dialogs.image_preview import ImagePreviewDialog
+from ui.dialogs.notes import NotesDialog
 from ui.dialogs.printer import PrinterDialog
 from ui.dialogs.template import TemplateDialog
 
 __all__ = [
     "AdvancedSearchDialog", "ChannelDialog", "HistorySearchDialog",
-    "HttpResponseDialog", "ImagePreviewDialog", "PrinterDialog", "TemplateDialog",
+    "HttpResponseDialog", "ImagePreviewDialog", "NotesDialog", "PrinterDialog", "TemplateDialog",
 ]

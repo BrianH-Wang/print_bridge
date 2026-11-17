@@ -6,6 +6,7 @@
   ui/panels/          日志、接收历史、自测三个页签
   ui/profiles.py      配置方案（mixin）
   ui/server_control.py 启停服务（mixin）
+  ui/updates.py       检查更新、更新日志（mixin）
   ui/dialogs/         各种弹窗
 """
 
@@ -32,9 +33,11 @@ from ui.panels import HistoryPanel, LogPanel, SelftestPanel, SimulatePanel
 from ui.printer_list import PrinterListWidget
 from ui.profiles import ProfileMixin
 from ui.server_control import ServerMixin
+from ui.updates import UpdateMixin
+from version import __version__
 
 
-class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
+class WebSocketServerGUI(ProfileMixin, ServerMixin, UpdateMixin, QWidget):
     def __init__(self):
         super().__init__()
         self.settings = QSettings("PrintBridge", "PrintBridge")
@@ -80,7 +83,8 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         )
 
         # 日志与接收历史两个面板各自带定时器消费自己的队列，主窗口不再管
-        print_log("🚀 Print Bridge 已就绪")
+        print_log(f"🚀 Print Bridge v{__version__} 已就绪")
+        self._start_update_flow()
 
     # ------------------------------------------------------------------ #
     # 界面构建
@@ -88,7 +92,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
 
     def init_ui(self):
         self.setObjectName("root")
-        self.setWindowTitle("Print Bridge (V1.0.0)")
+        self.setWindowTitle(f"Print Bridge (v{__version__})")
         # 配置区已经挪进可滚动的页签，窗口不必再为它留高度：
         # 只要容纳顶栏 + 启停条 + 页签头 + 表格几行即可，笔记本屏幕也放得下。
         self.setMinimumSize(900, 620)
@@ -201,6 +205,10 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, QWidget):
         theme_label.setObjectName("hint")
         row.addWidget(theme_label)
         row.addWidget(self._build_theme_switch())
+
+        row.addSpacing(8)
+        for button in self._build_update_buttons():
+            row.addWidget(button)
 
         return row
 

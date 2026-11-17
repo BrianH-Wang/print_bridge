@@ -316,6 +316,14 @@ QScrollBar::handle:vertical:hover {{ background: {scroll_handle_hover}; }}
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0; }}
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
 
+QTextBrowser#notes {{
+    background: {input_bg};
+    color: {text};
+    border: 1px solid {input_border};
+    border-radius: 8px;
+    padding: 8px 12px;
+}}
+
 QPlainTextEdit#log {{
     background: {log_bg};
     color: {log_text};

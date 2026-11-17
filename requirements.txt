@@ -1,0 +1,9 @@
+# 运行依赖（打包另需 pyinstaller）
+PyQt6>=6.5
+websockets>=12.0
+markdown>=3.4
+certifi             # 检查更新走 HTTPS，打包后的程序不一定找得到系统证书
+
+# 打印后端：Windows 用 pywin32，macOS / Linux 用 pycups（Linux 需先装 libcups2-dev）
+pywin32>=306; sys_platform == "win32"
+pycups>=2.0; sys_platform != "win32"

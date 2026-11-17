@@ -14,13 +14,19 @@ import shutil
 import sys
 from PyInstaller.utils.hooks import collect_submodules
 
+sys.path.insert(0, SPECPATH)
+from version import __version__   # 版本号只在 version.py 里改
+
 block_cipher = None
 
 a = Analysis(
     ['main.py'],
     pathex=[],
     binaries=[],
-    datas=[(os.path.join(SPECPATH, 'assets', 'logo.png'), 'assets')],  # 窗口 / 任务栏图标
+    datas=[
+        (os.path.join(SPECPATH, 'assets', 'logo.png'), 'assets'),   # 窗口 / 任务栏图标
+        (os.path.join(SPECPATH, 'CHANGELOG.md'), '.'),              # 程序里「更新日志」读它
+    ],
     hiddenimports=[],
     hookspath=[],
     runtime_hooks=[],
@@ -99,8 +105,8 @@ if sys.platform == 'darwin':
         info_plist={
             'CFBundleName': 'Print Bridge',
             'CFBundleDisplayName': 'Print Bridge',
-            'CFBundleVersion': '1.0.0',
-            'CFBundleShortVersionString': '1.0.0',
+            'CFBundleVersion': __version__,
+            'CFBundleShortVersionString': __version__,
             'LSUIElement': False,
             'NSHighResolutionCapable': True,
         },
