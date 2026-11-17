@@ -24,7 +24,7 @@ from PyQt6.QtWidgets import (
 from data_receiver import RESPONSE_DEFAULTS, RESPONSE_LABELS, configure_responses
 from logger import print_log
 from printer_utils import DEFAULT_RAW_PORT, NETWORK_PRINTER, SYSTEM_PRINTER
-from theme import SYSTEM, THEME_CHOICES, apply_theme
+from theme import SYSTEM, THEME_CHOICES, active_palette, apply_theme
 from ui.channel_list import ChannelListWidget
 from ui.constants import LEGACY_PROFILE_NAMES, DATA_ADDR
 from ui.dialogs import HttpResponseDialog
@@ -83,7 +83,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, UpdateMixin, QWidget):
         )
 
         # 日志与接收历史两个面板各自带定时器消费自己的队列，主窗口不再管
-        print_log(f"🚀 Print Bridge v{__version__} 已就绪")
+        print_log(f"Print Bridge v{__version__} 已就绪", event="🚀 已就绪", simple=True)
         self._start_update_flow()
 
     # ------------------------------------------------------------------ #
@@ -109,7 +109,7 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, UpdateMixin, QWidget):
         self.tabs = QTabWidget()
         self.tabs.setDocumentMode(True)      # macOS 下默认会居中并压缩页签，这里改为左对齐
         self.tabs.tabBar().setExpanding(False)
-        self.log_panel = LogPanel(self)
+        self.log_panel = LogPanel(self.settings, self)
         self.history = HistoryPanel(self.settings, self)
         self.history.countChanged.connect(self._update_history_tab_title)
         self.config_tab_index = self.tabs.addTab(self._build_config_page(), "配置 ⚙")
@@ -522,6 +522,8 @@ class WebSocketServerGUI(ProfileMixin, ServerMixin, UpdateMixin, QWidget):
 
     def _apply_theme(self):
         self.setStyleSheet(apply_theme(QApplication.instance(), self.theme_mode))
+        # 日志里错误 / 警告行的字色是按行给的，样式表管不到，单独递过去
+        self.log_panel.set_colors(active_palette(QApplication.instance(), self.theme_mode))
         # 样式表会改变卡片的内容高度（groupbox 的 margin-top / padding），
         # 换完样式重算一次最小高度，否则首帧的最小高按未套样式的尺寸算，偏小。
 

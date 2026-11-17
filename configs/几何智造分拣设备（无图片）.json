@@ -1,6 +1,6 @@
 {
   "print-bridge-config": 1,
-  "exported_at": "2026-09-29 11:00:28",
+  "exported_at": "2026-11-17 11:22:22",
   "note": "只有 /callback 一条（双向，等前端回分拣格口），不配对、收到就推。应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，出错带具体原因。设备不传图或前端不要图时用这份。",
   "profile": {
     "name": "双向获取数据（无图片）",
@@ -25,7 +25,7 @@
         "label": "分拣数值",
         "path": "/callback",
         "flow": "twoway",
-        "timeout": 15.0,
+        "timeout": 2.0,
         "dispatch": "concurrent",
         "envelope": {
           "success": "{{__success}}",

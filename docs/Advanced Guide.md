@@ -245,7 +245,7 @@ A pair group has **exactly one primary**; attachments may be several. Either may
 
 | Item | Default | Meaning |
 | --- | --- | --- |
-| **Wait for attachments up to** | 5 s | Shares the timeout budget with waiting for the front-end reply; see section 2 |
+| **Wait for attachments up to** | 1 s | Shares the timeout budget with waiting for the front-end reply; see section 2 |
 | **If they never arrive** | Send anyway | The page still gets the main data, just without the missing fields. Or "Return an error": 504 pairing timeout, nothing sent to the page |
 
 ### 5.4 The attachment channel
@@ -344,7 +344,7 @@ An exported `.json`, one channel's full structure (advanced parts only):
   "label": "Sorter data",
   "path": "/callback",
   "flow": "twoway",                 // oneway / twoway
-  "timeout": 15.0,
+  "timeout": 3.0,
   "dispatch": "concurrent",         // concurrent / serial
   "mapping": {
     "mode": "pick",                 // passthrough / pick / merge
@@ -368,7 +368,7 @@ An exported `.json`, one channel's full structure (advanced parts only):
     "group": "parcel",
     "field": "expressNo",
     "value": "", "rename": "",      // attachment channels only
-    "wait": 5.0, "keep": 60.0,
+    "wait": 1.0, "keep": 60.0,
     "on_missing": "send_partial",   // send_partial / error
     "max_pending": 200
   },
@@ -397,9 +397,9 @@ The built-in templates "几何智造分拣设备" (with image) and "几何智造
 | --- | --- |
 | Every response is `success / code / msg / data` | Both channels use a custom response envelope |
 | Success `msg` is "操作成功" | Channel `responses` override the `ok` / `ok_reply` text |
-| The document's 404 "服务器接口错误" / 500 "服务器逻辑错误" | Those are returned by the front-end page. Print Bridge's own error replies are **not overridden**; they keep the default messages with the actual reason: 400 "字段转译失败：缺少必填字段 code", 504 "等待前端回复超时（15s）" and so on, so the cause is visible at a glance |
+| The document's 404 "服务器接口错误" / 500 "服务器逻辑错误" | Those are returned by the front-end page. Print Bridge's own error replies are **not overridden**; they keep the default messages with the actual reason: 400 "字段转译失败：缺少必填字段 code", 504 "等待前端回复超时（3s）" and so on, so the cause is visible at a glance |
 | `/upload` image ≤ 2 MB, jpg/png/pdf only, 413 / 415 | `file` field carries a `check`; `file_too_large` → 413 "文件超过 2M 限制：…", `file_invalid` → 415 "文件解析失败：…", the reason follows the colon |
-| `/callback` returns the sorting result (`route` …) on success | Comes from the front-end page's reply, so this channel is **two-way** with a 15 s timeout, and "return the front-end reply as-is" is ticked: the page's reply goes to the device unchanged, without another `success/code/msg` wrapper |
+| `/callback` returns the sorting result (`route` …) on success | Comes from the front-end page's reply, so this channel is **two-way** with a 3 s timeout (waiting up to 1 s for the image, leaving the front end at least 2 s), and "return the front-end reply as-is" is ticked: the page's reply goes to the device unchanged, without another `success/code/msg` wrapper |
 | `/upload` `data` is always `null` | A one-way channel has no front-end reply, so `{{__data}}` is `null` |
 
 ## 9. Verifying a change

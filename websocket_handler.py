@@ -52,7 +52,7 @@ def _handle_text_message(websocket, data, ack_callback):
             print_log("⚠️ ack 消息缺少 id")
             return None
         acked, total, done = record_ack(websocket, msg_id)
-        print_log(f"📬 收到 ack ({acked}/{total}) id={msg_id} {'✅ 完成' if done else '⏳ 等待'}")
+        print_log(f"({acked}/{total}) {msg_id} {'✅ 完成' if done else '⏳ 等待'}", event="📬 收到 ack")
         if ack_callback is not None:
             ack_callback(msg_id, acked, total, done)
         return None
@@ -76,9 +76,9 @@ def _handle_text_message(websocket, data, ack_callback):
         shown = json.dumps(shorten(reply), ensure_ascii=False)
         accepted, acked, total, done = record_reply(websocket, msg_id, reply)
         if not accepted:
-            print_log(f"⚠️ 回复到得太晚或重复，已忽略 id={msg_id}: {shown}")
+            print_log(f"到得太晚或重复，已忽略 {msg_id} · {shown}", event="⚠️ 回复作废")
             return None
-        print_log(f"↩️ 收到前端回复 id={msg_id}: {shown}")
+        print_log(f"{msg_id} · {shown}", event="↩️ 前端回复")
         if ack_callback is not None and total:
             ack_callback(msg_id, acked, total, done)
         return None
@@ -106,7 +106,8 @@ def _decode_job(data):
 
 async def _run_print(websocket, printer, payload, time_info, job_id):
     """真正把一份数据打出去，并把结果回执给前端。"""
-    print_log(f"🖨 打印任务 {job_id or '-'} → {describe_printer(printer)}，{len(payload)} 字节")
+    print_log(f"{job_id or '-'} → {describe_printer(printer)}，{len(payload)} 字节",
+              event="🖨 打印任务", simple=True)
     success = await asyncio.to_thread(print_job, printer, payload)
     try:
         await _send(
@@ -132,7 +133,7 @@ async def websocket_handler(websocket, printers, ack_callback=None):
 
     第一台是默认打印机（前端不指定 printer 时用它）。
     """
-    print_log("🌐 WebSocket 客户端已连接")
+    print_log("WebSocket 客户端已连接", event="🌐 前端连接", simple=True)
     register_websocket(websocket)
 
     registry = {p["key"]: p for p in (printers or [])}
@@ -154,7 +155,7 @@ async def websocket_handler(websocket, printers, ack_callback=None):
         async for message in websocket:
             if isinstance(message, bytes):
                 # 老格式：裸二进制帧，打到默认打印机
-                print_log("📥 收到打印数据（二进制帧）")
+                print_log("二进制帧", event="📥 打印数据")
                 if default_printer is None:
                     spawn(_reject_print(websocket, "未启用自动打印"))
                 else:
@@ -169,7 +170,7 @@ async def websocket_handler(websocket, printers, ack_callback=None):
             try:
                 data = json.loads(message)
             except Exception as e:
-                print_log(f"❌ JSON 解析错误: {e}")
+                print_log(str(e), raw=message, error=e, event="❌ JSON 解析失败")
                 continue
             if not isinstance(data, dict):
                 print_log("⚠️ 非法 JSON 消息")
@@ -196,13 +197,13 @@ async def websocket_handler(websocket, printers, ack_callback=None):
                 spawn(_run_print(websocket, printer, payload, data.get("timeInfo"), job_id))
                 continue
 
-            print_log("📥 收到消息")
+            print_log("前端发来一条消息", event="📥 前端消息")
             time_info = _handle_text_message(websocket, data, ack_callback) or time_info
 
     except websockets.exceptions.ConnectionClosed:
-        print_log("❌ WebSocket 连接断开")
+        print_log("WebSocket 连接断开", event="🔌 前端断开", simple=True)
     except Exception as e:
-        print_log(f"❌ WebSocket 错误: {e}")
+        print_log(str(e), event="❌ WebSocket 错误")
     finally:
         unregister_websocket(websocket)
         if jobs:

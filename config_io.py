@@ -12,7 +12,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
-from channels import ANY_PATH, ONEWAY, TWOWAY, make_channel
+from channels import ANY_PATH, DEFAULT_REPLY_TIMEOUT, ONEWAY, TWOWAY, make_channel
 from mapping import PICK, make_mapping, make_outbound
 from pairing import ATTACH, PRIMARY, make_pair
 from printer_utils import make_printer
@@ -191,7 +191,7 @@ def _blank_profile():
     }
 
 
-def _sorter_data_channel(pair=None):
+def _sorter_data_channel(pair=None, timeout=DEFAULT_REPLY_TIMEOUT):
     """几何智造的 /callback：条码 + 重量体积，双向，等前端回分拣格口。
 
     设备文档 1.3 要求 data 里带 route，这个值只有前端算得出来，所以必须双向。
@@ -201,7 +201,7 @@ def _sorter_data_channel(pair=None):
     """
     return make_channel(
         key="sorter_data", label="分拣数值", path="/callback",
-        flow=TWOWAY, timeout=15,
+        flow=TWOWAY, timeout=timeout,
         # 前端回的已经是 success/code/msg/data 的完整应答，原样交给设备，不再套一层
         reply_raw=True,
         mapping=make_mapping(PICK, [
@@ -232,7 +232,9 @@ def sorter_profile():
         "enable_data": True,
         "printers": [make_printer(key="label", label="标签")],
         "channels": [
-            _sorter_data_channel(pair=make_pair(PRIMARY, "parcel", field="shipmentCode", wait=5)),
+            # 先等图最多 1 秒，再等前端回复，两段共用 3 秒：前端至少还有 2 秒
+            _sorter_data_channel(pair=make_pair(PRIMARY, "parcel", field="shipmentCode", wait=1),
+                                 timeout=3),
             make_channel(
                 key="sorter_image", label="分拣图片", path="/upload",
                 flow=ONEWAY,

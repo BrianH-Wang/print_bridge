@@ -106,7 +106,7 @@ Switch to "Log". You should see something like:
 ```
 ✅ WebSocket 监听启动: ws://0.0.0.0:8765
 🔁 接收通道 2 条：
-   · order_data 主数据 ← /data（双向）· 并发 · 超时 15s · 自定义应答外壳
+   · order_data 主数据 ← /data（双向）· 并发 · 超时 2s · 自定义应答外壳
 🌐 HTTP 监听启动: http://0.0.0.0:13213
 ```
 
@@ -200,7 +200,7 @@ Set the "**Pairing**" page on both channels:
 
 | Channel | Role | Also fill in |
 | --- | --- | --- |
-| The main-data one | **Primary** | How long to wait for the attachment (default 5 s), and whether to forward anyway or return an error when it never arrives |
+| The main-data one | **Primary** | How long to wait for the attachment (default 1 s), and whether to forward anyway or return an error when it never arrives |
 | The attachment one | **Attachment** | How long to hold it (default 60 s) |
 
 Both channels must use the same "**Pair group**" and the same "**Pair field**".
@@ -261,19 +261,74 @@ it loads automatically at startup (marked ★).
 
 ### Log
 
-Every send and receive is recorded here. When something goes wrong, look here first. Common lines:
+Every send and receive is recorded here. When something goes wrong, look here first. The switch at the top left picks one of two views, and the program remembers your choice:
 
-| Log line | Meaning |
+**简约 Simple** (for everyday use): **one row per request**: Time / Channel / Tracking no. / Result / Time taken / Note.
+Search for a tracking number and you see at once whether that parcel arrived, whether it succeeded and how long it took.
+
+- **Time taken** is the **total time** from receiving the upstream request to writing the reply back (waiting for the image and for the front end's reply are included).
+  When there was waiting, the brackets break it down in milliseconds, e.g. `1307 ms（配对 1005 / 前端 302）`:
+  "配对" is waiting for the attachment (image), "前端" is waiting for the page to reply, "排队" is queueing behind earlier requests in serial mode.
+  Whichever part is large is where the time went.
+- **Result** is the code returned upstream and what it means, e.g. `200 接收成功（双向）`, `504 等待回复超时`. Failed rows are red.
+- **Note** is the message returned upstream (`msg`); when the front end's sorting result is passed through as-is and has no `msg`, the reply itself is shown.
+- Besides requests it shows server start / stop, front end connect / disconnect, print jobs, and errors that don't belong to a request.
+
+**详细 Detailed** (for troubleshooting): every step: Time / Area / Node / **Event** / Content.
+"Event" is its own column, so receive, waiting for pairing, merged, pushed to front end, front-end reply, replied to device … line up vertically and are easy to scan.
+"Area" is which part of the program is working (接收 receive, 前端 front end, 打印 print, 配对 pairing …), "Node" is the channel (e.g. `sorter_data`).
+
+**The "操作" (Actions) buttons at the right end of each row** show what you can do with that row:
+
+| Button | What it does |
 | --- | --- |
-| `🌐 WebSocket 客户端已连接` | The browser page connected |
-| `📥 [channel] 接收数据` | Upstream sent data |
-| `📤 已推送给 N 个 WebSocket 客户端` | Forwarded to the page; N is how many pages are connected |
-| `↩️ 收到前端回复` | Two-way mode: the page returned its result |
-| `📨 回给设备` | The status code and body returned to upstream. This is exactly what upstream received |
-| `🖨 打印任务 → ...` | Printing |
-| Starts with `⚠️` / `❌` | Something went wrong; the reason follows |
+| **详细** (Detailed) | (request rows) switch to Detailed, showing only the steps of this request |
+| **源数据** (Source data) | (only when something went wrong, in blue) the raw data received and the request headers |
+| **详情** (Details) | the full content of this row |
+| **复制单号** (Copy tracking no.) | (request rows with a tracking number) copy the tracking number; a "已复制单号 xxx" (copied) notice appears below the table |
 
+Double-clicking a row does the same as its first button (rows with an error open the source data directly); the right-click menu has the same options.
+
+**From Simple to Detailed**: click "详细" on a request to switch to Detailed showing only the lines for that request
+(including the front-end reply and acknowledgements); a bar above says which request it is. Click "显示全部" (Show all) to go back.
+
+Common events:
+
+| Event | Meaning |
+| --- | --- |
+| `🌐 前端连接` / `🔌 前端断开` | The browser page connected / disconnected |
+| `📥 接收` | Upstream sent data |
+| `🧩 暂存待配对` / `🧩 已合并` | An attachment (e.g. the image) arrived first and is waiting / main data and attachment merged into one |
+| `📤 推送前端` | Forwarded to the page(s), with how many |
+| `↩️ 前端回复` / `✅ 采用回复` | Two-way mode: the page returned its result / that reply is used to answer upstream |
+| `📨 回给设备` | Status code, time taken and body returned upstream. This is exactly what upstream received |
+| `⏱ 回复超时` / `⚠️ 配对缺项` | The front end didn't reply in time / the attachment never came, forwarded without it |
+| `🖨 打印任务` | Printing |
+| Starts with `⚠️` / `❌` | Something went wrong; the content says why |
+
+**Searching**: type a tracking number, channel name or any word from an error into the search box; both the content and the source data are searched.
+The level drop-down shows only errors (or errors and warnings); in Detailed you can also show only one area.
+Right-click a row for "搜单号" (search this tracking number) or "只看节点 xxx" (only this node).
+
+**Full content and source data**: click "详情" (Details) on any row to see its full content.
+When upstream sends something that isn't valid JSON, the Simple row reads `400 请求体不是合法 JSON` in red.
+**Click "源数据" (Source data) on that row** (or double-click it) to see:
+
+- **exactly what was received**, with **the offending character selected** and its line and column, so a missing quote or extra comma is obvious;
+- **the request line, the sender's address and the request headers** (Content-Type, Content-Length …). If the body is empty, the headers tell you whether anything was sent and in what format;
+- the tracking number, if one can be recognised in the body, so searching by tracking number still finds it.
+
+"复制源数据" (Copy source data) copies it so you can send it to the other side; "看这个请求的详细日志" (see this request's detailed log) shows every step it went through.
+
+**Bad requests are saved to disk**: the log is gone when the program closes, so every body that fails to parse is also saved
+in the `bad_requests` folder inside the History storage directory ("打开目录" (Open folder) on the History tab takes you there).
+Each one is a `.txt` named by time and channel, e.g. `20261117-134737-138_sorter_data.txt`, containing the time, channel, error and its position, request headers and the exact body received, ready to send to the other side.
+If the body isn't valid UTF-8, a `.bin` with the same name keeps the original bytes. Only the latest 500 are kept; older ones are deleted automatically.
+The source data window shows where it was saved; "打开所在文件夹" (Open folder) takes you there.
+
+To copy whole rows, select them and press `Ctrl+C` (`⌘C` on Mac), or right-click "复制选中行" (Copy selected rows).
 Turn off "Auto-scroll" to stop and read, or clear the screen with one click (this only clears the display, not the history).
+The log keeps only the latest 2000 lines and is gone when the program closes; for records you need to keep, use History.
 
 ### History
 

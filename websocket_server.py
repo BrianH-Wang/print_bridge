@@ -18,16 +18,16 @@ async def _run(port, printers, stop_event, ready_event, ack_callback=None):
         ):
             if ready_event is not None:
                 ready_event.set()  # 绑定成功，界面据此确认服务真的起来了
-            print_log(f"✅ WebSocket 监听启动: ws://{host}:{port}")
+            print_log(f"WebSocket 监听 ws://{host}:{port}", event="✅ 服务启动", simple=True)
             # 轮询而非 run_in_executor(stop_event.wait)：后者会占住一个
             # 非守护线程，进程异常退出时 atexit join 不掉，端口会一直被占着
             while not stop_event.is_set():
                 await asyncio.sleep(0.2)
-            print_log("🛑 WebSocket 服务已停止")
+            print_log("WebSocket 服务已停止", event="🛑 服务停止", simple=True)
     except OSError as e:
-        print_log(f"❌ 无法启动 WebSocket 服务 (端口 {port}): {e}")
+        print_log(f"WebSocket 服务（端口 {port}）: {e}", event="❌ 启动失败", simple=True)
     except Exception as e:
-        print_log(f"❌ WebSocket 服务异常: {e}")
+        print_log(f"WebSocket 服务: {e}", event="❌ 服务异常", simple=True)
 
 
 def start_websocket_server(port, printers, stop_event, ready_event=None, ack_callback=None):

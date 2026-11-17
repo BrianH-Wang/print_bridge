@@ -1,6 +1,6 @@
 {
   "print-bridge-config": 1,
-  "exported_at": "2026-09-29 11:00:28",
+  "exported_at": "2026-11-17 11:22:22",
   "note": "两条链接：/callback 收数值（双向，等前端回分拣格口）、/upload 收图片（单向）。按条码配对合成一条。应答外壳按设备文档：success/code/msg/data，成功回「操作成功」，出错带具体原因；图片超 2M 回 413、解不开回 415。",
   "profile": {
     "name": "双向获取数据",
@@ -25,7 +25,7 @@
         "label": "分拣数值",
         "path": "/callback",
         "flow": "twoway",
-        "timeout": 15.0,
+        "timeout": 3.0,
         "dispatch": "concurrent",
         "envelope": {
           "success": "{{__success}}",
@@ -110,7 +110,7 @@
           "field": "shipmentCode",
           "value": "",
           "rename": "",
-          "wait": 5.0,
+          "wait": 1.0,
           "keep": 60.0,
           "on_missing": "send_partial",
           "max_pending": 200
@@ -128,7 +128,7 @@
         "label": "分拣图片",
         "path": "/upload",
         "flow": "oneway",
-        "timeout": 10.0,
+        "timeout": 2.0,
         "dispatch": "concurrent",
         "envelope": {
           "success": "{{__success}}",
@@ -191,7 +191,7 @@
           "field": "shipmentCode",
           "value": "",
           "rename": "",
-          "wait": 5.0,
+          "wait": 1.0,
           "keep": 60.0,
           "on_missing": "send_partial",
           "max_pending": 200

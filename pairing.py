@@ -25,7 +25,7 @@ SEND_PARTIAL = "send_partial"   # 等不到就照发，缺的字段就没有
 ERROR = "error"                 # 等不到就回错给设备，不发
 
 DEFAULT_GROUP = "default"
-DEFAULT_WAIT = 5.0
+DEFAULT_WAIT = 1.0     # 和等前端回复共用超时预算，留短点，别把前端的时间吃光
 DEFAULT_KEEP = 60.0
 DEFAULT_MAX_PENDING = 200
 MAX_KEEP = 3600.0

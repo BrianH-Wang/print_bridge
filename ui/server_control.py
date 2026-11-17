@@ -127,7 +127,8 @@ class ServerMixin:
         if not failed:
             return
 
-        print_log(f"❌ {' 和 '.join(failed)} 服务启动失败，已回滚（端口可能被占用）")
+        print_log(f"{' 和 '.join(failed)} 服务启动失败，已回滚（端口可能被占用）",
+                  event="❌ 启动失败", simple=True)
         self.stop_server()
         self._set_status(
             f"{' / '.join(failed)} 启动失败，端口可能被占用，详见日志", "error"

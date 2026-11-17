@@ -66,8 +66,11 @@ class UpdateMixin:
     def _show_whats_new(self):
         last = self.settings.value("last_seen_version")
         self.settings.setValue("last_seen_version", __version__)
-        if self._first_run or last == __version__:
-            # 头一次装的人不需要知道"更新了什么"
+        if last == __version__:
+            return
+        if last is None and self._first_run:
+            # 头一次装的人不需要知道"更新了什么"。
+            # 只看 _first_run 不够：没点过「保存」的人方案从没落盘，每次启动都像首次运行
             return
 
         text = read_changelog()
@@ -123,7 +126,7 @@ class UpdateMixin:
         self.update_btn.setObjectName("")
         self.update_btn.style().unpolish(self.update_btn)
         self.update_btn.style().polish(self.update_btn)
-        print_log(f"⬆️ 有新版本 v{update['version']}（当前 v{__version__}）")
+        print_log(f"v{update['version']}（当前 v{__version__}）", event="⬆️ 有新版本", simple=True)
 
         if silent and self.settings.value("skipped_update_version") == update["version"]:
             return

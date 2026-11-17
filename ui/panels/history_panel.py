@@ -18,7 +18,7 @@ from PyQt6.QtWidgets import (
 
 from data_receiver import (
     broadcast, channel_for_key, expire_pending_acks, init_history, new_message_id,
-    pending_ack_snapshot,
+    pending_ack_snapshot, set_bad_request_dir,
 )
 from history_store import HistoryStore, default_dir, migrate_legacy
 from logger import print_log, shorten
@@ -51,6 +51,7 @@ class HistoryPanel(QWidget):
 
         self.history_queue = queue.Queue()
         init_history(self.history_queue)
+        set_bad_request_dir(self.store.directory)
         # ack 来自 websocket 的 asyncio 线程，不能直接改 GUI：
         # 工作线程只入队，定时器在主线程里统一处理。
         self.ack_queue = queue.Queue()
@@ -394,7 +395,7 @@ class HistoryPanel(QWidget):
                         item.setText(text)
                         item.setForeground(Qt.GlobalColor.red)
                     break
-            print_log(f"⏰ ack 超时 ({acked}/{total}) id={msg_id}")
+            print_log(f"({acked}/{total}) {msg_id}", event="⏰ ack 超时")
 
     def _matches_filter(self, record):
         # 1) 单号模糊
@@ -458,6 +459,7 @@ class HistoryPanel(QWidget):
         if not directory:
             return
         self.store.set_directory(directory)
+        set_bad_request_dir(self.store.directory)
         self.settings.setValue("history_dir", directory)
         self._update_store_label()
 

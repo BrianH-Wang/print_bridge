@@ -136,6 +136,12 @@ QScrollArea#configArea, QWidget#configPage {{ background: transparent; border: n
 
 QLabel {{ color: {text}; }}
 QLabel#hint {{ color: {muted}; }}
+QLabel#toast {{
+    background: {primary};
+    color: #ffffff;
+    border-radius: 6px;
+    padding: 6px 14px;
+}}
 
 QLineEdit, QComboBox, QSpinBox, QDateTimeEdit {{
     border: 1px solid {input_border};
@@ -322,6 +328,20 @@ QTextBrowser#notes {{
     border: 1px solid {input_border};
     border-radius: 8px;
     padding: 8px 12px;
+}}
+
+QTableView#log {{
+    background: {log_bg};
+    alternate-background-color: {table_alt};
+    color: {log_text};
+    border: 1px solid {log_border};
+    border-radius: 8px;
+    font-size: 12px;
+}}
+QTableView#log::item {{ padding: 0 6px; }}
+QTableView#log::item:selected {{
+    background: {table_sel_bg};
+    color: {table_sel_fg};
 }}
 
 QPlainTextEdit#log {{

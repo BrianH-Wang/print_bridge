@@ -19,7 +19,7 @@ TWOWAY = "twoway"       # 设备 → 本程序 → 前端 → 本程序 → 设�
 CONCURRENT = "concurrent"   # 多条请求同时处理，2 不必等 1 回来
 SERIAL = "serial"           # 单发：一条处理完（拿到回复或超时）才轮到下一条
 
-DEFAULT_REPLY_TIMEOUT = 10.0
+DEFAULT_REPLY_TIMEOUT = 2.0    # 双向等前端回复的默认秒数；设备那头一般等不了太久
 
 DEFAULT_CHANNEL_KEY = "default"
 KEY_PATTERN = r"[a-z][a-z0-9_-]{0,19}"   # 和打印机 key 一个规矩，好打好记

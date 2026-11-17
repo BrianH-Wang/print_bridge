@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import re
 import secrets
 import threading
 import time
@@ -13,7 +14,8 @@ from channels import (
     RESPONSE_DEFAULTS, RESPONSE_LABELS, SERIAL, TWOWAY,
     build_body, describe_channel, http_status_for, make_channel, resolve_response, route,
 )
-from logger import print_log, shorten
+from history_store import save_bad_request
+from logger import begin_request, end_request, log_request, print_log, shorten
 from mapping import build_outbound, check_files, map_fields
 from pairing import (
     ATTACH, PRIMARY, attach_channels, clear_pairs, describe_pair, expire_pairs,
@@ -94,9 +96,18 @@ _httpd_lock = threading.Lock()
 _history_queue = None
 
 
+# 坏报文落盘的目录（跟着历史存储目录走）；没设就只进日志不落盘
+_bad_request_dir = None
+
+
 def init_history(history_queue):
     global _history_queue
     _history_queue = history_queue
+
+
+def set_bad_request_dir(directory):
+    global _bad_request_dir
+    _bad_request_dir = directory
 
 
 def configure_channels(channels):
@@ -224,7 +235,7 @@ def _on_send_done(future):
     try:
         future.result()
     except Exception as e:
-        print_log(f"⚠️ WebSocket 发送失败: {e}")
+        print_log(str(e), event="⚠️ 发送失败")
 
 
 def broadcast(payload):
@@ -390,6 +401,42 @@ def expire_pending_acks():
 # 自测发来的请求带这个头：照常走完整条链路，但不进接收历史、日志上打 🧪 标记
 SELFTEST_HEADER = "X-Print-Bridge-Selftest"
 
+# 简约日志里「单号」列从这些字段里取，转译前后的名字都认
+WAYBILL_KEYS = ("shipmentCode", "expressNo", "code", "waybillNo", "orderNo")
+_RESULT_LABELS = {key: label for key, label, *_ in RESPONSE_LABELS}
+_OK_REPLIES = ("ok", "ok_reply")
+
+
+def _waybill_of(data):
+    if isinstance(data, dict):
+        for key in WAYBILL_KEYS:
+            value = data.get(key)
+            if value not in (None, "") and not isinstance(value, (dict, list)):
+                return str(value)
+    return ""
+
+
+_WAYBILL_IN_TEXT = re.compile(
+    r'"(?:' + "|".join(WAYBILL_KEYS) + r')"\s*:\s*"?([^",}\s]+)')
+
+
+def _waybill_in_text(body):
+    """解析不了的报文里也试着把单号抠出来，简约日志按单号还能搜到它。"""
+    match = _WAYBILL_IN_TEXT.search(body.decode("utf-8", errors="replace"))
+    return match.group(1) if match else ""
+
+
+def _note_of(body):
+    """回给设备的那句话：各家外壳叫法不一样，挨个找；没有就把回复本身缩短了放上去。
+
+    原样透传前端回复时（比如只有 route 的分拣结果）没有 msg，这时内容本身就是使用者想看的。
+    """
+    if isinstance(body, dict):
+        for key in ("msg", "message", "error"):
+            if body.get(key):
+                return str(body[key])
+    return json.dumps(shorten(body), ensure_ascii=False)
+
 
 class _CallbackHandler(BaseHTTPRequestHandler):
     server_version = "PrintAppServer/1.0"
@@ -400,7 +447,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         pass  # 默认实现会写 stderr，这里交由业务日志统一输出
 
     def log_error(self, fmt, *args):
-        print_log(f"⚠️ HTTP {fmt % args}")
+        print_log(fmt % args, event="⚠️ HTTP")
 
     def _send_json(self, status, payload):
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -419,9 +466,63 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         code, message = response_for(key, channel, **fmt)
         body = build_body(channel, key, code, message, extra)
         status = http_status_for(channel, code)
-        print_log(f"📨 回给设备 HTTP {status}（{key}）: "
-                  f"{json.dumps(shorten(body), ensure_ascii=False)}")
+        node = channel["key"] if channel else None
         self._send_json(status, body)
+
+        # 总耗时：从收到请求到应答写回设备，排队、等配对、等前端回复全算在里面
+        elapsed_ms = (time.monotonic() - self._started) * 1000
+        phases = "".join(f" · {label} {ms:.0f}ms" for label, ms in self._phases)
+        print_log(f"HTTP {status}（{key}）· 耗时 {elapsed_ms:.0f}ms{phases} · "
+                  f"{json.dumps(shorten(body), ensure_ascii=False)}",
+                  node=node, event="📨 回给设备")
+        result = f"{code} {_RESULT_LABELS.get(key, key)}"
+        raw, error = self._bad_body or (None, None)
+        log_request(node, self._waybill, key in _OK_REPLIES,
+                    ("🧪 " if self.selftest else "") + result, elapsed_ms,
+                    note=_note_of(body), msg_id=self._msg_id, phases=self._phases,
+                    raw=raw, error=error, request=self._request_text() if raw is not None else None,
+                    saved=self._saved)
+
+    def _phase(self, label, since):
+        """记一段等待花了多久（排队、等配对、等前端回复），简约日志的耗时列里拆开给人看。"""
+        ms = (time.monotonic() - since) * 1000
+        if ms >= 1:   # 没排队、图早就到了这种 0ms 的不列，免得刷屏
+            self._phases.append((label, ms))
+
+    def _read_body(self):
+        """读请求体：认 Content-Length，也认分块传输（chunked）。超过上限返回 None。
+
+        有的设备 / HTTP 库不带 Content-Length 而是分块发，只认长度的话读到的就是空 body。
+        """
+        if "chunked" in self.headers.get("Transfer-Encoding", "").lower():
+            chunks, total = [], 0
+            while True:
+                size_line = self.rfile.readline(65537)
+                size = int(size_line.split(b";")[0].strip() or b"0", 16)
+                if size == 0:
+                    # 跳过 trailer，直到空行
+                    while self.rfile.readline(65537) not in (b"\r\n", b"\n", b""):
+                        pass
+                    return b"".join(chunks)
+                total += size
+                if total > MAX_BODY_BYTES:
+                    return None
+                chunks.append(self.rfile.read(size))
+                self.rfile.readline(65537)   # 块尾的 CRLF
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+        if length > MAX_BODY_BYTES:
+            return None
+        return self.rfile.read(length) if length else b""
+
+    def _request_text(self):
+        """请求行 + 来源 + 请求头，出错时和源数据一起给人看。"""
+        host, port = self.client_address[:2]
+        lines = [f"{self.command} {self.path}  ←  {host}:{port}"]
+        lines += [f"{name}: {value}" for name, value in self.headers.items()]
+        return "\n".join(lines)
 
     def do_GET(self):
         self._send_json(200, {
@@ -432,35 +533,56 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         })
 
     def do_POST(self):
+        # 每个请求一个号：这一路写的详细日志都挂在它下面，简约日志里双击能调出来
+        self._started = time.monotonic()
+        self._waybill = ""
+        self._msg_id = None
+        self._bad_body = None   # JSON 解析失败时的 (body, 异常)，简约日志那一行也带上
+        self._saved = None      # 坏报文落盘的文件
+        self._phases = []       # [(等什么, 毫秒)]
+        begin_request()
+        try:
+            self._handle_post()
+        finally:
+            end_request()
+
+    def _handle_post(self):
         self.selftest = self.headers.get(SELFTEST_HEADER) == "1"
         # 先定通道：应答外壳、超时、单双向全看它，连报错都要按它的形状回
         channel = channel_for(self.path)
         if channel is None:
-            print_log(f"⚠️ 没有匹配 {self.path} 的通道，已拒绝")
+            print_log(f"{self.path} 没有匹配的通道，已拒绝", event="⚠️ 无匹配通道")
             self._reply("no_route", path=self.path)
             return
 
-        try:
-            length = int(self.headers.get("Content-Length", 0))
-        except ValueError:
-            length = 0
-
-        if length > MAX_BODY_BYTES:
+        body = self._read_body()
+        if body is None:
             self._reply("too_large", channel=channel, limit=MAX_BODY_BYTES)
             return
-
-        body = self.rfile.read(length) if length else b""
 
         try:
             data = json.loads(body.decode("utf-8"))
         except Exception as e:
-            print_log(f"❌ JSON 解析失败: {e}")
-            self._reply("bad_json", channel=channel, error=str(e))
+            error = str(e)
+            if not body:
+                # 空 body 时 json 只会说 "Expecting value"，看不出是对方压根没发东西
+                error = (f"请求体是空的（Content-Length: {self.headers.get('Content-Length', '无')}，"
+                         f"Content-Type: {self.headers.get('Content-Type', '无')}）")
+            # 源报文跟着日志走：日志里双击能看到设备到底发了什么、错在第几行第几列
+            self._bad_body = (body, e)
+            self._waybill = _waybill_in_text(body)
+            request = self._request_text()
+            self._saved = self._save_bad(channel["key"], body, error, e, request)
+            print_log(error, node=channel["key"], raw=body, error=e, event="❌ JSON 解析失败",
+                      request=request, saved=self._saved)
+            self._reply("bad_json", channel=channel, error=error)
             return
+
+        self._waybill = _waybill_of(data)
 
         # 日志里折叠超长字段，转发给前端的仍是完整数据
         tag = "🧪 " if self.selftest else ""
-        print_log(f"{tag}📥 [{channel['key']}] 接收数据: {shorten(data)}")
+        print_log(shorten(data), node=channel["key"], event=f"{tag}📥 接收")
 
         # 设备最多等这么久：单发模式下排队和等回复共用这一份预算，
         # 不会因为前面排了几条就把设备晾成 2 倍、3 倍超时。
@@ -468,8 +590,11 @@ class _CallbackHandler(BaseHTTPRequestHandler):
 
         if channel["dispatch"] == SERIAL:
             state = _serial_state_for(channel["key"])
-            if not _serial_acquire(state, deadline):
-                print_log(f"⏱ [{channel['key']}] 单发模式排队超时，已拒绝本条")
+            since = time.monotonic()
+            acquired = _serial_acquire(state, deadline)
+            self._phase("排队", since)
+            if not acquired:
+                print_log("单发模式排队超时，已拒绝本条", node=channel["key"], event="⏱ 排队超时")
                 self._reply("queue_timeout", channel=channel,
                             timeout=f"{channel['timeout']:g}")
                 return
@@ -478,7 +603,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
                 # 却没人等它的回复，设备还会收到一个牛头不对马嘴的「等待回复超时」。
                 # 单向没有等待这回事，照常发。
                 if channel["flow"] == TWOWAY and time.monotonic() >= deadline:
-                    print_log(f"⏱ [{channel['key']}] 排到时预算已用完，未推送")
+                    print_log("排到时预算已用完，未推送", node=channel["key"], event="⏱ 排队超时")
                     self._reply("queue_timeout", channel=channel,
                                 timeout=f"{channel['timeout']:g}")
                     return
@@ -488,6 +613,19 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         else:
             self._dispatch(data, channel, deadline)
 
+    def _save_bad(self, node, body, message, error, request):
+        """坏报文写到磁盘，重启后也能翻。写不进去只记一笔，不耽误回设备。"""
+        if _bad_request_dir is None or self.selftest:
+            return None
+        # 空 body 时用自己的说明（json 只会说 Expecting value），位置信息还从异常里拿
+        if body:
+            message = error
+        try:
+            return str(save_bad_request(_bad_request_dir, node, body, message, request))
+        except OSError as e:
+            print_log(f"坏报文没存下来：{e}", node=node, event="⚠️ 落盘失败")
+            return None
+
     def _hold_for_pairing(self, data, channel):
         """附加通道：转译后存进暂存区，收下就回，不广播给前端。
 
@@ -496,21 +634,23 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         """
         pair = pair_of(channel)
         mapped, problems = map_fields(data, channel.get("mapping"))
+        self._waybill = _waybill_of(mapped) or self._waybill
         if problems:
-            print_log(f"❌ [{channel['key']}] 字段转译失败: {'；'.join(problems)}")
+            print_log('；'.join(problems), node=channel["key"], event="❌ 转译失败")
             self._reply("map_failed", channel=channel, error="；".join(problems))
             return
 
         key = mapped.get(pair["field"]) if isinstance(mapped, dict) else None
         if key in (None, ""):
             message = f"配对字段 {pair['field']} 取不到值"
-            print_log(f"❌ [{channel['key']}] {message}")
+            print_log(message, node=channel["key"], event="❌ 配对失败")
             self._reply("map_failed", channel=channel, error=message)
             return
 
         total = store_attach(pair["group"], str(key), channel["key"], mapped,
                              pair["keep"], pair["max_pending"])
-        print_log(f"🧩 [{channel['key']}] 已暂存待配对 {pair['field']}={key}（暂存区 {total} 条）")
+        print_log(f"{pair['field']}={key}（暂存区 {total} 条）", node=channel["key"],
+                  event="🧩 暂存待配对")
         if not self.selftest:
             _record_history(data, 0, None, channel["key"])
         self._reply("ok", extra={"forwarded": 0}, channel=channel)
@@ -525,30 +665,32 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         key = mapped.get(pair["field"]) if isinstance(mapped, dict) else None
         if key in (None, ""):
             message = f"配对字段 {pair['field']} 取不到值"
-            print_log(f"❌ [{channel['key']}] {message}")
+            print_log(message, node=channel["key"], event="❌ 配对失败")
             self._reply("map_failed", channel=channel, error=message)
             return {}, False
 
         # 等图和等前端回复共用同一份预算：设备最多等它配的那个秒数，
         # 不会因为先等了 5 秒图就把总时长变成 wait + timeout
-        wait_until = min(time.monotonic() + pair["wait"], deadline)
+        since = time.monotonic()
+        wait_until = min(since + pair["wait"], deadline)
         found, missing = take_attaches(pair["group"], str(key),
                                        [c["key"] for c in wanted], wait_until)
+        self._phase("配对", since)
 
         if missing:
             names = "、".join(missing)
             if pair["on_missing"] == PAIR_ERROR:
-                print_log(f"⏱ [{channel['key']}] 等不到配对数据（{names}），已拒绝本条")
+                print_log(f"等不到 {names}，已拒绝本条", node=channel["key"], event="⏱ 配对超时")
                 self._reply("pair_timeout", channel=channel,
                             missing=names, timeout=f"{pair['wait']:g}")
                 return {}, False
-            print_log(f"⚠️ [{channel['key']}] 等不到配对数据（{names}），按缺项照发")
+            print_log(f"等不到 {names}，按缺项照发", node=channel["key"], event="⚠️ 配对缺项")
 
         specs = {c["key"]: pair_of(c) for c in wanted}
         extra = merge_attaches(mapped, found, specs)
         if extra:
-            print_log(f"🧩 [{channel['key']}] 已合并 {len(found)} 份附加数据："
-                      f"{'、'.join(extra)}")
+            print_log(f"{len(found)} 份附加数据：{'、'.join(extra)}", node=channel["key"],
+                      event="🧩 已合并")
         return extra, True
 
     def _dispatch(self, data, channel, deadline):
@@ -557,7 +699,7 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         bad = check_files(data, channel.get("mapping"))
         if bad:
             scene, error, limit = bad
-            print_log(f"❌ [{channel['key']}] 文件校验不通过: {error}")
+            print_log(str(error), node=channel["key"], event="❌ 文件校验")
             self._reply(scene, channel=channel, error=error, limit=limit)
             return
 
@@ -571,8 +713,9 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         if role_of(channel) == PRIMARY:
             # 先按本通道的映射算一遍，才知道配对键的值是多少
             mapped, problems = map_fields(data, channel.get("mapping"))
+            self._waybill = _waybill_of(mapped) or self._waybill
             if problems:
-                print_log(f"❌ [{channel['key']}] 字段转译失败: {'；'.join(problems)}")
+                print_log('；'.join(problems), node=channel["key"], event="❌ 转译失败")
                 self._reply("map_failed", channel=channel, error="；".join(problems))
                 return
             extra_fields, keep_going = self._collect_pair(channel, mapped, deadline)
@@ -582,13 +725,14 @@ class _CallbackHandler(BaseHTTPRequestHandler):
         # id 提前生成：自定义报文模板里要用 {{__id}} 把它嵌进前端认识的字段里，
         # 双向还要先按这个 id 开好等待槽——本机前端回得可能比广播这行还快。
         msg_id = new_message_id()
+        self._msg_id = msg_id
         payload, problems = build_outbound(channel, data, msg_id,
                                            expect_reply=twoway,
                                            extra_fields=extra_fields)
 
         if problems:
             # 转译不过就别往前端发半成品，直接告诉设备哪里不对
-            print_log(f"❌ [{channel['key']}] 字段转译失败: {'；'.join(problems)}")
+            print_log('；'.join(problems), node=channel["key"], event="❌ 转译失败")
             self._reply("map_failed", channel=channel, error="；".join(problems))
             return
 
@@ -602,9 +746,9 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             inject_id=False,   # build_outbound 已经把 id 放到该放的位置了
         )
         if sent:
-            print_log(f"📤 已推送给 {sent} 个 WebSocket 客户端: {msg_id}")
+            print_log(f"{sent} 个前端 · {msg_id}", node=channel["key"], event="📤 推送前端")
         else:
-            print_log("⚠️ 无 WebSocket 客户端连接，数据未转发")
+            print_log("没有前端连着，数据未转发", node=channel["key"], event="⚠️ 无前端")
 
         if not self.selftest:
             _record_history(data, sent, msg_id, channel["key"])
@@ -619,17 +763,21 @@ class _CallbackHandler(BaseHTTPRequestHandler):
             self._reply("no_client", extra={"forwarded": 0}, channel=channel)
             return
 
+        since = time.monotonic()
         got = event.wait(timeout=max(deadline - time.monotonic(), 0))
+        self._phase("前端", since)
         entry = _close_reply_slot(msg_id)
 
         if not got:
-            print_log(f"⏱ 等待前端回复超时 ({channel['timeout']:g}s): {msg_id}")
+            print_log(f"{channel['timeout']:g}s 内没等到 · {msg_id}", node=channel["key"],
+                      event="⏱ 回复超时")
             self._reply("reply_timeout", extra={"forwarded": sent}, channel=channel,
                         timeout=f"{channel['timeout']:g}")
             return
 
         reply = entry["reply"] if entry else None
-        print_log(f"✅ 用前端 {entry['from'] if entry else '?'} 的回复答复设备: {msg_id}")
+        print_log(f"用前端 {entry['from'] if entry else '?'} 的回复答复设备 · {msg_id}",
+                  node=channel["key"], event="✅ 采用回复")
         self._reply("ok_reply", extra={"forwarded": sent, "data": reply}, channel=channel)
 
 
@@ -653,7 +801,7 @@ def start_http_server(addr, ready_event=None):
         host, port = parse_addr(addr)
         httpd = ThreadingHTTPServer((host, port), _CallbackHandler)
     except Exception as e:
-        print_log(f"❌ 无法启动 HTTP 服务: {e}")
+        print_log(f"HTTP 服务: {e}", event="❌ 启动失败", simple=True)
         return
 
     with _httpd_lock:
@@ -661,7 +809,7 @@ def start_http_server(addr, ready_event=None):
 
     if ready_event is not None:
         ready_event.set()  # 绑定成功，界面据此确认服务真的起来了
-    print_log(f"🌐 HTTP 监听启动: http://{host}:{port}")
+    print_log(f"HTTP 监听 http://{host}:{port}", event="🌐 服务启动", simple=True)
     try:
         httpd.serve_forever(poll_interval=0.2)
     finally:
@@ -669,7 +817,7 @@ def start_http_server(addr, ready_event=None):
         with _httpd_lock:
             if _httpd is httpd:
                 _httpd = None
-        print_log("🛑 HTTP 服务已停止")
+        print_log("HTTP 服务已停止", event="🛑 服务停止", simple=True)
 
 
 def stop_http_server():

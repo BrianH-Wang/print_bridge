@@ -11,11 +11,12 @@ from PyQt6.QtWidgets import (
 )
 
 from channels import (
-    ANY_PATH, ENVELOPE_PRESETS, ENVELOPE_VARIABLES, KEY_PATTERN, ONEWAY, TWOWAY,
-    build_body, make_channel, normalize_path, validate_envelope,
+    ANY_PATH, DEFAULT_REPLY_TIMEOUT, ENVELOPE_PRESETS, ENVELOPE_VARIABLES, KEY_PATTERN,
+    ONEWAY, TWOWAY, build_body, make_channel, normalize_path, validate_envelope,
 )
 from pairing import ATTACH as PAIR_ATTACH
 from pairing import DEFAULT_GROUP as PAIR_DEFAULT_GROUP
+from pairing import DEFAULT_WAIT as PAIR_DEFAULT_WAIT
 from pairing import NONE as PAIR_NONE
 from pairing import PRIMARY as PAIR_PRIMARY
 from pairing import make_pair
@@ -136,7 +137,7 @@ class ChannelDialog(QDialog):
         timeout_box = QHBoxLayout(timeout_row)
         timeout_box.setContentsMargins(0, 0, 0, 0)
         timeout_box.setSpacing(6)
-        self.timeout_input = QLineEdit(f"{float(current.get('timeout') or 10):g}")
+        self.timeout_input = QLineEdit(f"{float(current.get('timeout') or DEFAULT_REPLY_TIMEOUT):g}")
         self.timeout_input.setFixedWidth(72)
         self.timeout_input.textChanged.connect(self._refresh_basic_summary)
         self.timeout_hint = QLabel("秒　·　只有双向才会等")
@@ -190,7 +191,7 @@ class ChannelDialog(QDialog):
             # 附加通道根本不推前端，别在这儿说"转给前端"跟下面的说明打架
             lines += ["收下就回 200，存进配对暂存区等主报文来取。"]
         elif twoway:
-            timeout = self.timeout_input.text().strip() or "10"
+            timeout = self.timeout_input.text().strip() or f"{DEFAULT_REPLY_TIMEOUT:g}"
             lines += [
                 f"收到后转给前端，然后等前端回一条，最多等 {timeout} 秒，",
                 "拿到回复才答复设备；等不到回 504。",
@@ -278,7 +279,7 @@ class ChannelDialog(QDialog):
         wait_layout = QHBoxLayout(wait_row)
         wait_layout.setContentsMargins(0, 0, 0, 0)
         wait_layout.setSpacing(6)
-        self.pair_wait_input = QLineEdit(f"{float(pair.get('wait', 5)):g}")
+        self.pair_wait_input = QLineEdit(f"{float(pair.get('wait', PAIR_DEFAULT_WAIT)):g}")
         self.pair_wait_input.setFixedWidth(72)
         wait_hint = QLabel("秒　·　和「等前端回复」共用同一份超时预算")
         wait_hint.setObjectName("hint")

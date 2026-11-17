@@ -16,6 +16,10 @@ HISTORY_FILE = "history.jsonl"
 IMAGE_DIR = "images"
 THUMB_SUFFIX = "_thumb.png"
 
+# 解析失败的报文落盘到这里，程序重启了也能翻；只留最近这么多份，不让它无限长
+BAD_REQUEST_DIR = "bad_requests"
+BAD_REQUEST_KEEP = 500
+
 # 单张图片上限，超过则不落盘（仍会记录元数据并告警）
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 
@@ -119,6 +123,53 @@ def find_image_field(payload):
         if name:
             return key, raw, name, ext
     return None
+
+
+def save_bad_request(directory, node, body, error, request_text):
+    """把一份解析失败的报文写成能直接打开看的 .txt，返回文件路径。
+
+    内容：时间、通道、错误和出错位置、请求行与请求头、源数据原文。
+    源数据不是合法 UTF-8 时，另存一份同名 .bin 留原始字节（.txt 里解不开的字节是 �）。
+    """
+    folder = Path(directory) / BAD_REQUEST_DIR
+    folder.mkdir(parents=True, exist_ok=True)
+    now = datetime.now()
+    stem = f"{now:%Y%m%d-%H%M%S}-{now.microsecond // 1000:03d}_{node or 'unknown'}"
+    # 同一毫秒同一通道来两条（并发模式下可能）：后一条加序号，别把前一条盖了
+    base, n = stem, 1
+    while (folder / f"{stem}.txt").exists():
+        n += 1
+        stem = f"{base}-{n}"
+
+    try:
+        text = body.decode("utf-8")
+        exact = True
+    except UnicodeDecodeError:
+        text = body.decode("utf-8", errors="replace")
+        exact = False
+
+    lines = [
+        f"时间: {now:%Y-%m-%d %H:%M:%S}.{now.microsecond // 1000:03d}",
+        f"通道: {node or '-'}",
+        f"错误: {error}",
+    ]
+    if hasattr(error, "lineno"):
+        lines.append(f"位置: 第 {error.lineno} 行第 {error.colno} 列（第 {error.pos} 个字符）")
+    if not exact:
+        lines.append(f"注意: 不是合法 UTF-8，原始字节另存在 {stem}.bin")
+    lines += ["", "----- 请求 -----", request_text,
+              "", f"----- 源数据（{len(body)} 字节）-----", text if body else "（空）"]
+    path = folder / f"{stem}.txt"
+    path.write_text("\n".join(lines), encoding="utf-8")
+    if not exact:
+        (folder / f"{stem}.bin").write_bytes(body)
+
+    # 文件名以时间开头，按名字排就是按时间排
+    reports = sorted(folder.glob("*.txt"))
+    for old in reports[:-BAD_REQUEST_KEEP]:
+        old.unlink(missing_ok=True)
+        old.with_suffix(".bin").unlink(missing_ok=True)
+    return path
 
 
 class HistoryStore:
