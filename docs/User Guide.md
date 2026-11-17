@@ -26,7 +26,8 @@ It does two jobs, and you can enable either one on its own:
 | **Receive data** | An upstream system posts data to this machine; the program forwards it to the browser page |
 | **Auto print** | The browser page sends print content; the program hands it to the printer |
 
-> The program only relays **inside this computer**. Nothing is sent to the internet.
+> The program only relays **inside this computer**. No business data is sent to the internet.
+> The only outgoing request is the **update check**: it asks GitHub whether a newer version exists and sends no data (see [9. Updating](#9-updating)).
 
 ---
 
@@ -38,9 +39,20 @@ Double-click the program icon. Nothing else needs installing.
 
 **If the operating system blocks it:**
 
-- **macOS** says "cannot be opened because the developer cannot be verified"
-  → In Finder, **Control-click** the icon → choose "Open" → click "Open" again in the dialog.
-  You only need to do this once.
+- **macOS** says "the developer cannot be verified" / "Apple could not verify it is free of malware"
+  (the program has no Apple developer signature, so this always happens the first time; nothing is wrong with it)
+  1. Double-click it once; when it is blocked, click "Done";
+  2. Open **System Settings → Privacy & Security**, scroll to the bottom and click **"Open Anyway"** next to Print Bridge, then enter your login password;
+  3. Double-click the program again and click "Open" in the dialog.
+
+  You only need to do this once, and again after installing each new version.
+  (On macOS 14 and earlier you can also **Control-click** the icon in Finder → "Open".)
+- **macOS** says "is damaged and can't be opened. You should move it to the Trash"
+  → This is the quarantine flag added by the download, not real damage. Open Terminal, paste the line below, press Return, then double-click the program:
+  ```bash
+  xattr -dr com.apple.quarantine "/Applications/Print Bridge.app"
+  ```
+  (If the program isn't in Applications, use its actual path; or type `xattr -dr com.apple.quarantine ` and drag the program icon into the Terminal window.)
 - **Windows** says "Windows protected your PC"
   → Click "More info" → "Run anyway".
 - On first launch the **firewall asks whether to allow network access** → you must click "Allow",
@@ -379,6 +391,40 @@ The top of the "History" tab shows the current location. "**Open folder**" opens
 
 > When upgrading from an old version, history that used to live in the program folder is **moved to the new location automatically**.
 > The log records it with a line starting `📦 历史记录已从程序目录迁移到 …`.
+
+---
+
+## 9. Updating
+
+### How you find out about a new version
+
+A few seconds after the program opens it **checks once automatically**. If there is a new version, a window lists what changed and the button at the top right turns into "新版本 vX.Y.Z" (New version).
+If there is nothing new, or this computer is offline, you won't be bothered.
+
+You can also click **检查更新** (Check for updates) at the top right at any time.
+
+The window has three buttons:
+
+| Button | What it does |
+| --- | --- |
+| **下载新版本** (Download) | Downloads the package for your system in the browser |
+| **跳过这个版本** (Skip this version) | No more automatic reminders for this version; newer ones are still announced |
+| **稍后** (Later) | Ignore it for now; you'll be reminded next time the program opens |
+
+### How to install it
+
+The program does not replace itself. After downloading, install it the same way as the first time:
+
+- **macOS**: quit Print Bridge, open the downloaded `.dmg`, drag Print Bridge into Applications and choose "Replace".
+  Then allow it once using the macOS steps in [Starting](#starting).
+- **Windows**: quit Print Bridge, unzip the downloaded `.zip` and replace the old program folder with the new one.
+
+**Configurations, history and images are not stored in the program folder** (see [section 8](#8-where-settings-and-data-live)), so replacing the program loses nothing.
+
+### What changed in this update
+
+The first time you open a new version, a "已更新到 vX.Y.Z" (Updated to) window lists what changed, including any versions you skipped.
+To see it again later, click **更新日志** (Changelog) at the top right; every version's changes are there.
 
 ---
 

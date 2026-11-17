@@ -1,6 +1,7 @@
 name: build
 
-# 三平台并行打包,各自上传 artifact
+# 三平台并行打包,各自上传 artifact;
+# 推 v* tag 时再多一步:三个包都好了之后发 GitHub Release(程序里「检查更新」就是看这里)
 on:
   workflow_dispatch:
   push:
@@ -18,7 +19,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - os: macos-14          # arm64 (Apple Silicon runner)
+          - os: macos-15          # arm64 (Apple Silicon runner)
             artifact_name: print-bridge-macos-arm64
           # macos-13（Intel）的 runner 已经下线,排队 24 小时也等不到;
           # 需要 Intel 包时在 Intel 机器上本地打。
@@ -34,6 +35,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: '3.13'
+
+      # tag 必须等于 "v" + version.py:不然程序自报的版本和 Release 对不上,检查更新会一直提示
+      - name: Check tag matches version.py
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: bash
+        run: |
+          V=$(python -c "from version import __version__; print(__version__)")
+          [ "v$V" = "$GITHUB_REF_NAME" ] || { echo "tag $GITHUB_REF_NAME 和 version.py 的 v$V 不一致"; exit 1; }
 
       - name: Install system libs (Linux)
         if: runner.os == 'Linux'
@@ -59,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           "$PY" -m pip install --upgrade pip
-          "$PY" -m pip install pyinstaller PyQt6 websockets markdown
+          "$PY" -m pip install pyinstaller PyQt6 websockets markdown certifi
           case "$RUNNER_OS" in
             Windows) "$PY" -m pip install pywin32 ;;
             *)       "$PY" -m pip install pycups || true ;;
@@ -91,11 +100,46 @@ jobs:
           if-no-files-found: error
           retention-days: 5
 
+      # 文件名带上 macos:程序检查更新时按文件名里的 windows / macos / linux 挑本平台的包
+      - name: Rename DMG (macOS)
+        if: runner.os == 'macOS'
+        shell: bash
+        run: mv "dist/Print Bridge.dmg" "${{ matrix.artifact_name }}.dmg"
+
       - name: Upload artifact (macOS)
         if: runner.os == 'macOS'
         uses: actions/upload-artifact@v6
         with:
           name: ${{ matrix.artifact_name }}
-          path: dist/Print Bridge.dmg
+          path: ${{ matrix.artifact_name }}.dmg
           if-no-files-found: error
           retention-days: 5
+
+  # 只在推 v* tag 时跑:收齐三个平台的包,正文取 CHANGELOG.md 里本版那一节
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v6
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Release notes from CHANGELOG.md
+        run: |
+          awk -v v="## ${GITHUB_REF_NAME}" '
+            index($0, v)==1 {f=1; next}
+            /^## / && f {exit}
+            f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || { echo "CHANGELOG.md 里没有 ## ${GITHUB_REF_NAME} 这一节"; exit 1; }
+          cat notes.md
+
+      - uses: softprops/action-gh-release@v3
+        with:
+          body_path: notes.md
+          files: dist/*
